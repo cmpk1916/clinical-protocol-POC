@@ -1,0 +1,27 @@
+{
+  "fixture_version": "1.0.0",
+  "rows": [
+    {
+      "section": "Objectives and endpoints",
+      "passage": "The primary endpoint is change from baseline in symptom score at Week 24.",
+      "claim": "Primary endpoint and timepoint",
+      "fact_ids": ["study.endpoint.primary", "study.timepoint.week_24"],
+      "evidence_location": "Synopsis > Endpoints > paragraph 1",
+      "review_state": "approved",
+      "validation_status": "pass"
+    },
+    {
+      "section": "Treatment administration",
+      "passage": "Participants in Arm A receive Synthetic Intervention A 10 mg once daily.",
+      "claim": "Arm, intervention, dose, unit, and frequency",
+      "fact_ids": [
+        "study.arm.active",
+        "study.intervention.synthetic_a",
+        "study.intervention.synthetic_a.dose"
+      ],
+      "evidence_location": "Synopsis > Arms and interventions > paragraph 1",
+      "review_state": "approved",
+      "validation_status": "pass"
+    }
+  ]
+}

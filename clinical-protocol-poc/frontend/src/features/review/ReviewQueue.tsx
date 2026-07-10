@@ -1,0 +1,135 @@
+"use client";
+
+import React from "react";
+import { useEffect, useRef, useState } from "react";
+
+import { demoReviewApi, type ReviewApi } from "../../lib/api";
+import type { ReviewItem, ReviewQueuePayload } from "../../lib/types";
+import { EvidenceComparison } from "./EvidenceComparison";
+
+type Props = {
+  studyId: string;
+  api?: ReviewApi;
+};
+
+type PendingApproval = {
+  item: ReviewItem;
+  confirmed: boolean;
+};
+
+export function ReviewQueue({ studyId, api = demoReviewApi }: Readonly<Props>) {
+  const [queue, setQueue] = useState<ReviewQueuePayload | null>(null);
+  const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
+  const confirmationRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    let active = true;
+
+    api.getReviewQueue(studyId).then((payload) => {
+      if (active) {
+        setQueue(payload);
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [api, studyId]);
+
+  useEffect(() => {
+    if (pendingApproval?.item.isCritical) {
+      confirmationRef.current?.focus();
+    }
+  }, [pendingApproval]);
+
+  if (!queue) {
+    return <p>Loading review queue…</p>;
+  }
+
+  const approve = (item: ReviewItem) => {
+    if (item.isCritical) {
+      setPendingApproval({ item, confirmed: false });
+      return;
+    }
+
+    void api.approveFact({
+      studyId,
+      factId: item.id,
+      versionToken: item.versionToken,
+      explicitCriticalConfirmation: false,
+    });
+  };
+
+  return (
+    <section aria-labelledby="review-queue-heading">
+      <h1 id="review-queue-heading">Guided Review</h1>
+      {queue.blockers.map((blocker) => (
+        <p role="alert" key={blocker}>
+          {blocker}
+        </p>
+      ))}
+      <ol aria-label="Ordered review queue">
+        {queue.items.map((item) => (
+          <li key={item.id}>
+            <article aria-labelledby={`${item.id}-heading`}>
+              <h2 id={`${item.id}-heading`}>{item.label}</h2>
+              <p>
+                {item.category} · Status: {item.status} · Version token: {item.versionToken}
+              </p>
+              <EvidenceComparison item={item} />
+              <section aria-label={`Downstream impact for ${item.label}`}>
+                <h3>Downstream impact</h3>
+                <ul>
+                  {item.downstreamImpact.map((impact) => (
+                    <li key={impact}>{impact}</li>
+                  ))}
+                </ul>
+              </section>
+              <menu aria-label={`Review actions for ${item.label}`}>
+                <button type="button" onClick={() => approve(item)}>
+                  Approve fact
+                </button>
+                <button type="button">Edit fact</button>
+                <button type="button">Reject fact</button>
+                <button type="button">Defer fact</button>
+              </menu>
+            </article>
+          </li>
+        ))}
+      </ol>
+
+      {pendingApproval ? (
+        <form
+          aria-label={`Critical approval for ${pendingApproval.item.label}`}
+          onSubmit={(event) => {
+            event.preventDefault();
+            void api.approveFact({
+              studyId,
+              factId: pendingApproval.item.id,
+              versionToken: pendingApproval.item.versionToken,
+              explicitCriticalConfirmation: pendingApproval.confirmed,
+            });
+          }}
+        >
+          <label>
+            <input
+              ref={confirmationRef}
+              type="checkbox"
+              required
+              checked={pendingApproval.confirmed}
+              onChange={(event) =>
+                setPendingApproval({
+                  item: pendingApproval.item,
+                  confirmed: event.currentTarget.checked,
+                })
+              }
+            />
+            I explicitly confirm this critical fact
+          </label>
+          <p>Approval will use version token {pendingApproval.item.versionToken}.</p>
+          <button type="submit">Confirm approval</button>
+        </form>
+      ) : null}
+    </section>
+  );
+}

@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "protocol-poc"
+version = "0.1.0"
+description = "Synthetic-data-only clinical protocol proof of concept"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+  "alembic==1.15.2",
+  "defusedxml==0.7.1",
+  "fastapi==0.115.12",
+  "psycopg[binary]==3.2.9",
+  "pydantic-settings==2.9.1",
+  "python-multipart==0.0.20",
+  "sqlalchemy==2.0.41",
+  "uvicorn[standard]==0.34.2",
+]
+
+[dependency-groups]
+dev = [
+  "httpx==0.28.1",
+  "mypy==1.15.0",
+  "pytest==8.3.5",
+  "ruff==0.11.8",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/protocol_poc"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = ["--import-mode=importlib"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["protocol_poc"]
+
+[[tool.mypy.overrides]]
+module = ["defusedxml", "defusedxml.*"]
+ignore_missing_imports = true

@@ -1,0 +1,74 @@
+{
+  "fixture_version": "1.0.0",
+  "review": {
+    "status": "approved_for_poc_fixture",
+    "reviewer_role": "qualified medical writer",
+    "reviewer": "Synthetic Fixture Reviewer",
+    "reviewed_on": "2026-07-08",
+    "note": "Synthetic reference contract only; no clinical or regulatory use."
+  },
+  "facts": [
+    {
+      "id": "study.identity.short_title",
+      "type": "study_identity",
+      "value": "SYN-24",
+      "location": "Synopsis > Study identity > paragraph 1"
+    },
+    {
+      "id": "study.objective.primary",
+      "type": "objective",
+      "value": "Evaluate change from baseline in symptom score at Week 24.",
+      "location": "Synopsis > Objectives > paragraph 1"
+    },
+    {
+      "id": "study.endpoint.primary",
+      "type": "endpoint",
+      "value": "Change from baseline in symptom score at Week 24.",
+      "location": "Synopsis > Endpoints > paragraph 1"
+    },
+    {
+      "id": "study.timepoint.week_24",
+      "type": "timepoint",
+      "value": "Week 24",
+      "location": "Synopsis > Endpoints > paragraph 1"
+    },
+    {
+      "id": "study.arm.active",
+      "type": "arm",
+      "value": "Arm A",
+      "location": "Synopsis > Arms and interventions > paragraph 1"
+    },
+    {
+      "id": "study.intervention.synthetic_a",
+      "type": "intervention",
+      "value": "Synthetic Intervention A",
+      "location": "Synopsis > Arms and interventions > paragraph 1"
+    },
+    {
+      "id": "study.intervention.synthetic_a.dose",
+      "type": "dose",
+      "value": 10,
+      "unit": "mg",
+      "frequency": "once daily",
+      "location": "Synopsis > Arms and interventions > paragraph 1"
+    },
+    {
+      "id": "study.population.adults",
+      "type": "population",
+      "value": "Adults aged 18 through 75 years with synthetic condition X.",
+      "location": "Synopsis > Population > paragraph 1"
+    },
+    {
+      "id": "study.eligibility.age",
+      "type": "eligibility",
+      "value": "Age 18 through 75 years at screening.",
+      "location": "Synopsis > Eligibility > paragraph 1"
+    },
+    {
+      "id": "study.eligibility.diagnosis",
+      "type": "eligibility",
+      "value": "Documented synthetic condition X for at least 6 months.",
+      "location": "Synopsis > Eligibility > paragraph 2"
+    }
+  ]
+}

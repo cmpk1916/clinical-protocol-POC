@@ -1,0 +1,1 @@
+{"description":"Fixture model response violates the declared schema.","finding_codes":["MODEL_OUTPUT_SCHEMA_INVALID"],"exported_unsupported_clinical_fact_count":0,"export_allowed":false}
