@@ -29,7 +29,7 @@ class ExportService:
         self.quality = quality_service or QualityService(session)
         self.audit = AuditService(session)
 
-    def create_snapshot(self, ctx: TenantContext, study_id: str, *, expected_study_version: int, template_version_id: str, template_hash: str) -> ExportSnapshot:
+    def create_snapshot(self, ctx: TenantContext, study_id: str, *, expected_study_version: int, template_version_id: str, template_hash: str, renderer_version: str = "pending") -> ExportSnapshot:
         study = self.session.scalar(select(Study).where(Study.id == study_id, Study.tenant_id == ctx.tenant_id).with_for_update())
         state = ExportState()
         if study is None or study.version != expected_study_version:
@@ -44,7 +44,12 @@ class ExportService:
             self.audit.append(ctx, "export.denied", "study", study_id, {"blocker_codes": list(decision.blocker_codes)})
             self.session.flush()
             raise ExportDenied(decision.blocker_codes)
-        snapshot = ExportSnapshot(tenant_id=ctx.tenant_id, study_id=study_id, study_version=study.version)
+        snapshot = ExportSnapshot(
+            tenant_id=ctx.tenant_id,
+            study_id=study_id,
+            study_version=study.version,
+            renderer_version=renderer_version,
+        )
         self.session.add(snapshot)
         self.session.flush()
         facts = self.session.execute(select(Fact, FactVersion).join(FactVersion, (FactVersion.fact_id == Fact.id) & (FactVersion.tenant_id == Fact.tenant_id)).where(Fact.tenant_id == ctx.tenant_id, Fact.study_id == study_id, Fact.status == "approved", FactVersion.is_current.is_(True))).all()
