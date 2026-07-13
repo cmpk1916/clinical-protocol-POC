@@ -34,7 +34,7 @@ services:
       MINIO_ENDPOINT: ${MINIO_ENDPOINT:-http://minio:9000}
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
-      APP_ENV: ${APP_ENV:-production}
+      APP_ENV: ${APP_ENV:-test}
       ENVIRONMENT: ${ENVIRONMENT:-development}
       ALLOW_INSECURE_IDENTITY_HEADERS: ${ALLOW_INSECURE_IDENTITY_HEADERS:-true}
     ports:

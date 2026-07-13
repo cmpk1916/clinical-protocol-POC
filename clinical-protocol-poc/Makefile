@@ -1,4 +1,4 @@
-.PHONY: bootstrap test lint typecheck evaluation e2e up down
+.PHONY: bootstrap test lint typecheck evaluation e2e demo up down
 
 E2E_PROJECT ?= protocol-poc-release-e2e
 E2E_WEB_PORT ?= 3200
@@ -30,6 +30,12 @@ e2e:
 	APP_ENV=test WEB_PORT=$(E2E_WEB_PORT) API_PORT=$(E2E_API_PORT) docker compose -p $(E2E_PROJECT) up --build -d --wait; \
 	cd frontend; \
 	E2E_WEB_URL=http://127.0.0.1:$(E2E_WEB_PORT) E2E_API_URL=http://127.0.0.1:$(E2E_API_PORT) pnpm exec playwright test
+
+demo:
+	APP_ENV=test docker compose up --build -d --wait
+	curl --fail --silent --show-error -X POST http://127.0.0.1:$${API_PORT:-8000}/test/reset
+	curl --fail --silent --show-error -X POST http://127.0.0.1:$${API_PORT:-8000}/test/studies/synthetic-phase-2/seed -H 'Content-Type: application/json' --data '{"scenario":"happy_path"}'
+	@echo "Synthetic demo ready: http://127.0.0.1:$${WEB_PORT:-3000}/studies/synthetic-phase-2/review"
 
 up:
 	docker compose up --build

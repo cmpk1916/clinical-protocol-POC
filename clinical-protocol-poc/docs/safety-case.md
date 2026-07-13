@@ -16,6 +16,7 @@ The table format is checked automatically. Test identifiers point to executable 
 | `fact_change_invalidation` | Passage dependencies store fact versions | Fact edits mark dependent passages stale and deny export | `protocol_poc.drafting` | `tests/integration/review/test_invalidation.py`, `frontend/tests/e2e/fact-change-invalidation.spec.ts` | Dependency declarations may be incomplete outside the synthetic contract. |
 | `validator_failure_closed` | Export requires a successful deterministic validator result | Validator outage scenario denies export | `protocol_poc.validation` | `tests/evaluation/test_adversarial_exports.py`, `tests/unit/export/test_gate.py` | Availability and recovery behavior are not production-hardened. |
 | `tenant_isolation` | Tenant context scopes persistence and identity verification | Tenant/audit tests detect cross-tenant or unsigned access | `protocol_poc.tenancy` | `tests/unit/test_identity.py`, `tests/integration/test_audit_append_only.py` | POC deployment and database policies are not a production authorization model. |
+| `artifact_integrity` | One immutable snapshot produces an exact DOCX/CSV/HTML set with stored SHA-256 metadata | Browser downloads and repository reads independently verify exact bytes and tenant scope | `protocol_poc.export` | `tests/integration/export/test_artifact_orchestration.py`, `frontend/tests/e2e/happy-path.spec.ts` | Checksums detect changes but do not make the POC a validated records system. |
 
 ## Evaluation evidence
 
@@ -23,6 +24,7 @@ The table format is checked automatically. Test identifiers point to executable 
 - Thirteen adversarial scenarios deny export.
 - The evaluation invariant is `unsupported clinical facts exported: 0`.
 - Browser journeys cover successful snapshot export, unsupported eligibility blocking, and dose-change invalidation.
+- The retained synthetic release export records one shared snapshot ID, three independently verified hashes, paragraph-level traceability, and a rendered DOCX visual inspection in `docs/release-checklist.md`.
 - Quality is reported by six dimensions; there is no composite readiness percentage.
 
 ## Non-claims

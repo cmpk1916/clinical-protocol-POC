@@ -3,7 +3,7 @@
 ## Before the demo
 
 1. Confirm the repository contains synthetic data only.
-2. Start the local stack with `make up`.
+2. Copy `.env.example` to `.env`, then run `make demo`.
 3. Open `http://localhost:3000/studies/synthetic-phase-2/review`.
 4. State clearly: this is a proof of concept, not a validated clinical or regulatory system.
 
@@ -16,22 +16,37 @@
 5. Open `/studies/synthetic-phase-2/draft`.
 6. Review the passage evidence, guidance, findings, and impact.
 7. Show the six scorecard dimensions and the disclaimer; note that no overall readiness percentage exists.
-8. Select **Create export**.
-9. Show `protocol.docx`, `traceability.csv`, and `scorecard.html`, their SHA-256 values, and their shared snapshot ID.
+8. Accept the valid passage, then select **Create export**.
+9. Download `protocol.docx`, `traceability.csv`, and `scorecard.html`. Show their distinct SHA-256 values and shared snapshot ID.
+10. Open the CSV to show the source filename and paragraph location, and open the scorecard to show all six dimensions without an overall readiness percentage.
 
 ## Blocked adversarial path: unsupported eligibility
 
-1. Run the automated browser journey or seed `unsupported_eligibility` in test mode.
+1. Reset and seed the scenario, then refresh the draft page:
+
+   ```bash
+   curl -X POST http://127.0.0.1:8000/test/reset
+   curl -X POST http://127.0.0.1:8000/test/studies/synthetic-phase-2/seed -H 'Content-Type: application/json' --data '{"scenario":"unsupported_eligibility"}'
+   ```
+
 2. Show the unsupported eligibility finding in the passage and export panels.
 3. Show that **Create export** is disabled.
 4. Explain that the server gate, not the button, is authoritative.
 
 ## Blocked adversarial path: changed fact
 
-1. Seed `fact_change_invalidation` in test mode.
+1. Reset and seed the changed-fact scenario, then refresh the draft page:
+
+   ```bash
+   curl -X POST http://127.0.0.1:8000/test/reset
+   curl -X POST http://127.0.0.1:8000/test/studies/synthetic-phase-2/seed -H 'Content-Type: application/json' --data '{"scenario":"fact_change_invalidation"}'
+   ```
+
 2. Show that the accepted passage becomes stale after the approved dose changes.
 3. Show that passage acceptance and export are denied until revalidation.
 
 ## Close
 
 Reiterate the limitations: synthetic data only, no live research, no clinical or regulatory claim, no submission-readiness claim, and not a validated system.
+
+Run `make down` to stop the local stack.

@@ -35,6 +35,7 @@ test("writer reviews facts, accepts passages, and exports one snapshot", async (
       expect(body.subarray(0, 2).toString()).toBe("PK");
     } else if (expectedNames[index] === "traceability.csv") {
       expect(body.toString()).toContain("section,passage,claim,fact_value,evidence_location");
+      expect(body.toString()).toContain('""paragraph"":4');
     } else {
       const html = body.toString();
       expect(html).toContain("Synthetic POC output only");

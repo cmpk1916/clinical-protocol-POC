@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 
 
 @dataclass(frozen=True)
@@ -47,3 +48,18 @@ def test_every_safety_invariant_has_control_test_and_owner() -> None:
 
     assert required <= {control.control_id for control in controls}
     assert all(control.test_ids and control.module_owner for control in controls)
+
+
+def test_release_checklist_records_artifact_and_visual_evidence() -> None:
+    checklist_path = Path(__file__).parents[3] / "docs" / "release-checklist.md"
+    checklist = checklist_path.read_text()
+
+    assert all(
+        artifact in checklist
+        for artifact in ("protocol.docx", "traceability.csv", "scorecard.html")
+    )
+    assert "Shared snapshot ID:" in checklist
+    assert len(re.findall(r"\b[a-f0-9]{64}\b", checklist)) == 3
+    assert "DOCX visual inspection: PASS" in checklist
+    assert "synthetic data only" in checklist.lower()
+    assert "not a validated system" in checklist.lower()
