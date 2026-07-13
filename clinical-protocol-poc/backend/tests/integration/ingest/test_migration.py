@@ -23,5 +23,8 @@ def test_files_migration_upgrade_constraints_and_downgrade(tmp_path: Path, monke
     assert {item["name"] for item in inspector.get_check_constraints("ingest_jobs")} == {"ck_ingest_job_role", "ck_ingest_job_status"}
     assert "uq_source_evidence_version_ordinal" in {item["name"] for item in inspector.get_unique_constraints("source_evidence")}
     assert "fk_evidence_version_tenant" in {item["name"] for item in inspector.get_foreign_keys("source_evidence")}
+    assert "uq_passage_version_id_tenant" in {
+        item["name"] for item in inspector.get_unique_constraints("passage_versions")
+    }
     command.downgrade(config, "base")
     assert inspect(create_engine(url)).get_table_names() == ["alembic_version"]

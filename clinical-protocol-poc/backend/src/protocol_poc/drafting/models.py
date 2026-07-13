@@ -33,6 +33,7 @@ class PassageVersion(Base):
     __tablename__ = "passage_versions"
     __table_args__ = (
         UniqueConstraint("passage_id", "version", name="uq_passage_version_number"),
+        UniqueConstraint("id", "tenant_id", name="uq_passage_version_id_tenant"),
         ForeignKeyConstraint(["passage_id", "tenant_id"], ["passages.id", "passages.tenant_id"], name="fk_passage_version_passage_tenant"),
     )
     id: Mapped[str] = mapped_column(String(128), primary_key=True, default=new_id)
