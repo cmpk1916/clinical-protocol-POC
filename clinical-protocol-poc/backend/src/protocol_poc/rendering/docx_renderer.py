@@ -4,7 +4,13 @@ from typing import Any, cast
 from xml.etree import ElementTree
 from zipfile import ZipFile
 
-from protocol_poc.rendering.template_map import build_template, deterministic_package, replace_unique_target
+from protocol_poc.rendering.scorecard import DISCLAIMER
+from protocol_poc.rendering.template_map import (
+    build_template,
+    deterministic_package,
+    replace_unique_disclaimer,
+    replace_unique_target,
+)
 
 
 @dataclass(frozen=True)
@@ -23,6 +29,7 @@ class DocxRenderer:
         with ZipFile(BytesIO(package)) as archive:
             entries = {name: archive.read(name) for name in archive.namelist() if not name.startswith("docProps/")}
         document = entries["word/document.xml"].decode("utf-8")
+        document = replace_unique_disclaimer(document, DISCLAIMER)
         for section, text in snapshot.passages.items():
             document = replace_unique_target(document, section, text)
         entries["word/document.xml"] = document.encode("utf-8")

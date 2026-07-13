@@ -7,6 +7,9 @@ class TemplateMappingError(ValueError):
     pass
 
 
+DISCLAIMER_TOKEN = "[[POC_DISCLAIMER]]"
+
+
 def insertion_token(section: str) -> str:
     return f"[[SECTION:{section}]]"
 
@@ -21,6 +24,15 @@ def replace_unique_target(document_xml: str, section: str, text: str) -> str:
     return document_xml.replace(token, escape(text))
 
 
+def replace_unique_disclaimer(document_xml: str, text: str) -> str:
+    count = document_xml.count(DISCLAIMER_TOKEN)
+    if count == 0:
+        raise TemplateMappingError("missing POC disclaimer insertion point")
+    if count > 1:
+        raise TemplateMappingError("ambiguous POC disclaimer insertion point")
+    return document_xml.replace(DISCLAIMER_TOKEN, escape(text))
+
+
 def _write_zip(entries: dict[str, bytes]) -> bytes:
     output = BytesIO()
     with ZipFile(output, "w", ZIP_DEFLATED, compresslevel=9) as archive:
@@ -33,9 +45,12 @@ def _write_zip(entries: dict[str, bytes]) -> bytes:
 
 
 def build_template(sections: list[str]) -> bytes:
-    paragraphs = "".join(
+    paragraphs = (
+        f'<w:p><w:r><w:t>{escape(DISCLAIMER_TOKEN)}</w:t></w:r></w:p>'
+        + "".join(
         f'<w:p><w:r><w:t>{escape(insertion_token(section))}</w:t></w:r></w:p>'
         for section in sections
+        )
     )
     document = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
