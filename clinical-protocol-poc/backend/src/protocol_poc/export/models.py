@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKeyConstraint, JSON, String, Text, event, inspect
+from sqlalchemy import CheckConstraint, DateTime, ForeignKeyConstraint, JSON, String, Text, UniqueConstraint, event, inspect
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from protocol_poc.common.ids import new_id
@@ -76,7 +76,43 @@ class SnapshotFinding(_SnapshotRow, Base):
     severity: Mapped[str] = mapped_column(String(32), nullable=False)
 
 
-SNAPSHOT_TYPES = (ExportSnapshot, SnapshotFact, SnapshotPassage, SnapshotGuidance, SnapshotTemplate, SnapshotFinding)
+class ExportArtifactRecord(_SnapshotRow, Base):
+    __tablename__ = "export_artifacts"
+    __table_args__ = (
+        *_snapshot_fk("export_artifact"),
+        UniqueConstraint(
+            "tenant_id", "snapshot_id", "filename",
+            name="uq_export_artifact_snapshot_filename",
+        ),
+        UniqueConstraint("storage_key", name="uq_export_artifact_storage_key"),
+        CheckConstraint(
+            "filename IN ('protocol.docx','traceability.csv','scorecard.html')",
+            name="ck_export_artifact_filename",
+        ),
+        CheckConstraint("size_bytes >= 0", name="ck_export_artifact_size"),
+        CheckConstraint(
+            "length(sha256_hex) = 64 AND lower(sha256_hex) = sha256_hex",
+            name="ck_export_artifact_sha256",
+        ),
+    )
+    filename: Mapped[str] = mapped_column(String(64), nullable=False)
+    media_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    renderer_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(nullable=False)
+    sha256_hex: Mapped[str] = mapped_column(String(64), nullable=False)
+    storage_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+SNAPSHOT_TYPES = (
+    ExportSnapshot,
+    SnapshotFact,
+    SnapshotPassage,
+    SnapshotGuidance,
+    SnapshotTemplate,
+    SnapshotFinding,
+    ExportArtifactRecord,
+)
 
 
 @event.listens_for(Session, "before_flush")

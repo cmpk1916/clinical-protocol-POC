@@ -9,6 +9,7 @@ from typing import Literal, Protocol
 
 class FileStorage(Protocol):
     def put(self, key: str, data: bytes) -> bool: ...
+    def get(self, key: str) -> bytes | None: ...
     def delete(self, key: str) -> None: ...
     def object_checksum(self, key: str) -> str | None: ...
 
@@ -74,6 +75,10 @@ class LocalFileStorage:
     def delete(self, key: str) -> None:
         self._path(key).unlink(missing_ok=True)
 
+    def get(self, key: str) -> bytes | None:
+        target = self._path(key)
+        return target.read_bytes() if target.exists() else None
+
     def object_checksum(self, key: str) -> str | None:
         target = self._path(key)
         if not target.exists():
@@ -84,6 +89,7 @@ class LocalFileStorage:
 class S3Client(Protocol):
     def put_object(self, *, Bucket: str, Key: str, Body: bytes, IfNoneMatch: str, Metadata: dict[str, str]) -> object: ...
     def head_object(self, *, Bucket: str, Key: str) -> dict[str, object]: ...
+    def get_object(self, *, Bucket: str, Key: str) -> dict[str, object]: ...
     def delete_object(self, *, Bucket: str, Key: str) -> object: ...
 
 
@@ -156,6 +162,21 @@ class S3FileStorage:
 
     def delete(self, key: str) -> None:
         self._client.delete_object(Bucket=self._bucket, Key=key)
+
+    def get(self, key: str) -> bytes | None:
+        try:
+            response = self._client.get_object(Bucket=self._bucket, Key=key)
+        except Exception as exc:
+            if self._classifier.classify_head(exc) == "not_found":
+                return None
+            raise
+        read = getattr(response.get("Body"), "read", None)
+        if not callable(read):
+            raise OSError("storage response has no readable body")
+        content = read()
+        if not isinstance(content, bytes):
+            raise OSError("storage response body is not bytes")
+        return content
 
     def object_checksum(self, key: str) -> str | None:
         try:

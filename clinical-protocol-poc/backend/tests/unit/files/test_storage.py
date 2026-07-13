@@ -1,4 +1,5 @@
 from pathlib import Path
+from io import BytesIO
 
 import pytest
 
@@ -48,6 +49,13 @@ class FakeS3:
     def delete_object(self, *, Bucket: str, Key: str) -> object:
         self.objects.pop(Key, None)
         return {}
+
+    def get_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
+        if Key not in self.objects:
+            error = RuntimeError("missing")
+            error.code = "NoSuchKey"  # type: ignore[attr-defined]
+            raise error
+        return {"Body": BytesIO(self.objects[Key][0])}
 
 
 def test_s3_adapter_uses_conditional_create_and_checksum_idempotency() -> None:
@@ -113,3 +121,19 @@ def test_s3_ambiguous_different_checksum_is_collision() -> None:
 
     with pytest.raises(FileExistsError, match="collision"):
         S3FileStorage(Different(), "bucket").put("key", b"data")
+
+
+def test_local_storage_reads_exact_bytes_and_missing_is_none(tmp_path: Path) -> None:
+    storage = LocalFileStorage(tmp_path)
+    storage.put("tenant/artifact.bin", b"exact bytes")
+    assert storage.get("tenant/artifact.bin") == b"exact bytes"
+    assert storage.get("tenant/missing.bin") is None
+    with pytest.raises(ValueError, match="invalid storage key"):
+        storage.get("../escape")
+
+
+def test_s3_storage_reads_exact_bytes_and_missing_is_none() -> None:
+    storage = S3FileStorage(FakeS3(), "bucket")
+    storage.put("tenant/artifact.bin", b"exact bytes")
+    assert storage.get("tenant/artifact.bin") == b"exact bytes"
+    assert storage.get("tenant/missing.bin") is None
