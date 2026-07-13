@@ -125,19 +125,24 @@ export const demoScorecard: QualityScorecard = {
   ],
 };
 
-const successfulExport: ExportState = {
-  blockers: [],
-  snapshotId: "snapshot-demo-001",
-  artifacts: [
-    { name: "protocol.docx", sha256: "demo-docx-sha256", snapshotId: "snapshot-demo-001" },
-    { name: "traceability.csv", sha256: "demo-csv-sha256", snapshotId: "snapshot-demo-001" },
-    { name: "scorecard.html", sha256: "demo-html-sha256", snapshotId: "snapshot-demo-001" },
-  ],
-};
-
-export const demoExportApi: ExportApi = {
-  async createExport() {
-    return successfulExport;
+export const protocolExportApi: ExportApi = {
+  async createExport(studyId) {
+    const response = await fetch(`/api/studies/${encodeURIComponent(studyId)}/exports`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const payload = (await response.json()) as ExportState & {
+      detail?: { blockers?: string[] };
+    };
+    if (!response.ok) {
+      return {
+        blockers: payload.detail?.blockers ?? ["Export failed"],
+        snapshotId: null,
+        artifacts: [],
+      };
+    }
+    return payload;
   },
 };
 

@@ -32,9 +32,9 @@ describe("ExportPanel", () => {
           blockers: [],
           snapshotId: "snapshot-123",
           artifacts: [
-            { name: "protocol.docx", sha256: "docxhash", snapshotId: "snapshot-123" },
-            { name: "traceability.csv", sha256: "csvhash", snapshotId: "snapshot-123" },
-            { name: "scorecard.html", sha256: "htmlhash", snapshotId: "snapshot-123" },
+            { id: "docx", name: "protocol.docx", mediaType: "application/docx", sha256: "docxhash", snapshotId: "snapshot-123", downloadUrl: "/api/artifacts/docx" },
+            { id: "csv", name: "traceability.csv", mediaType: "text/csv", sha256: "csvhash", snapshotId: "snapshot-123", downloadUrl: "/api/artifacts/csv" },
+            { id: "html", name: "scorecard.html", mediaType: "text/html", sha256: "htmlhash", snapshotId: "snapshot-123", downloadUrl: "/api/artifacts/html" },
           ],
         };
       },
@@ -44,8 +44,8 @@ describe("ExportPanel", () => {
     await user.click(screen.getByRole("button", { name: "Create export" }));
 
     assert.equal(screen.getByTestId("snapshot-id").textContent, "snapshot-123");
-    assert.ok(screen.getByText("protocol.docx"));
     assert.ok(screen.getByText("docxhash"));
+    assert.equal(screen.getByRole("link", { name: "Download protocol.docx" }).getAttribute("href"), "/api/artifacts/docx");
     assert.match(screen.getByTestId("artifact-snapshot-ids").textContent ?? "", /snapshot-123/);
   });
 });

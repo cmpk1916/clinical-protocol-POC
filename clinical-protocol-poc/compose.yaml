@@ -35,6 +35,8 @@ services:
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
       APP_ENV: ${APP_ENV:-production}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      ALLOW_INSECURE_IDENTITY_HEADERS: ${ALLOW_INSECURE_IDENTITY_HEADERS:-true}
     ports:
       - "127.0.0.1:${API_PORT:-8000}:8000"
     depends_on:

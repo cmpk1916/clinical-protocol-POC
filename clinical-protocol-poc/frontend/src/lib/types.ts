@@ -78,9 +78,12 @@ export type QualityScorecard = {
 };
 
 export type ExportArtifact = {
+  id: string;
   name: string;
+  mediaType: string;
   sha256: string;
   snapshotId: string;
+  downloadUrl: string;
 };
 
 export type ExportState = {

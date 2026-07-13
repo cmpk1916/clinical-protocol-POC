@@ -3,13 +3,13 @@
 import React from "react";
 import { useState } from "react";
 
-import { demoExportApi } from "../../lib/api";
+import { protocolExportApi } from "../../lib/api";
 import type { ExportApi, ExportState } from "../../lib/types";
 
 export function ExportPanel({
   studyId,
   state,
-  api = demoExportApi,
+  api = protocolExportApi,
 }: Readonly<{ studyId: string; state: ExportState; api?: ExportApi }>) {
   const [exportState, setExportState] = useState(state);
   const blocked = exportState.blockers.length > 0;
@@ -41,8 +41,10 @@ export function ExportPanel({
           <ul data-testid="artifact-snapshot-ids">
             {exportState.artifacts.map((artifact) => (
               <li key={artifact.name}>
-                <span>{artifact.name}</span> · <span>{artifact.sha256}</span> ·{" "}
-                <span>{artifact.snapshotId}</span>
+                <a href={artifact.downloadUrl} download={artifact.name}>
+                  Download {artifact.name}
+                </a>{" "}
+                · <span>{artifact.sha256}</span> · <span>{artifact.snapshotId}</span>
               </li>
             ))}
           </ul>
