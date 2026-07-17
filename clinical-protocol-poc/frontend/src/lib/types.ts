@@ -1,5 +1,14 @@
 export type ReviewStatus = "needs_review" | "approved" | "rejected" | "deferred" | "conflict";
 
+export type StudySummary = {
+  id: string;
+  name: string;
+  version: number;
+  lifecycle: "active" | "archived";
+  updatedAt: string;
+  archivedAt: string | null;
+};
+
 export type ReviewItem = {
   id: string;
   label: string;

@@ -54,6 +54,8 @@ services:
     build: ./frontend
     environment:
       API_URL: http://api:8000
+      LOCAL_TENANT_ID: ${LOCAL_TENANT_ID:-local-poc}
+      LOCAL_ACTOR_ID: ${LOCAL_ACTOR_ID:-local-writer}
     ports:
       - "127.0.0.1:${WEB_PORT:-3000}:3000"
     depends_on:

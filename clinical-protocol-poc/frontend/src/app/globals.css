@@ -1,0 +1,40 @@
+:root {
+  color: #17242b;
+  background: #f3f5f1;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; }
+button, input { font: inherit; }
+button, a { cursor: pointer; }
+
+.dashboard-shell { width: min(1120px, calc(100% - 32px)); margin: 0 auto; padding: 48px 0 72px; }
+.hero { max-width: 680px; margin-bottom: 32px; }
+.hero h1 { margin: 6px 0 12px; font-size: clamp(2.25rem, 6vw, 4.5rem); line-height: .95; letter-spacing: -.05em; }
+.eyebrow, .status { color: #246653; font-size: .75rem; font-weight: 700; letter-spacing: .13em; text-transform: uppercase; }
+.create-panel, .study-panel { background: #fff; border: 1px solid #d9dfd8; border-radius: 18px; padding: 24px; box-shadow: 0 16px 50px rgb(24 43 37 / 7%); }
+.create-panel { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; align-items: end; margin-bottom: 24px; }
+.create-panel h2, .study-panel h2 { margin-top: 0; }
+label { display: block; margin-bottom: 8px; font-weight: 700; }
+.create-row { display: flex; gap: 8px; }
+input { min-width: 0; flex: 1; border: 1px solid #aebbb5; border-radius: 8px; padding: 11px 12px; }
+button, .card-actions a { border: 1px solid #246653; border-radius: 8px; padding: 10px 14px; color: #246653; background: #fff; font-weight: 700; text-decoration: none; }
+button[type="submit"], .card-actions a { color: #fff; background: #246653; }
+button:disabled { cursor: not-allowed; opacity: .5; }
+.study-heading { display: flex; justify-content: space-between; align-items: center; gap: 20px; }
+[role="tablist"] { display: flex; gap: 6px; }
+[role="tab"][aria-selected="true"] { color: #fff; background: #17242b; border-color: #17242b; }
+.study-grid { display: grid; gap: 12px; }
+.study-card { display: flex; justify-content: space-between; align-items: center; gap: 24px; border-top: 1px solid #e4e8e3; padding: 18px 0; }
+.study-card h3 { margin: 4px 0; }
+.study-card p { margin: 0; }
+.card-actions { display: flex; gap: 8px; }
+.empty-state { border: 1px dashed #aebbb5; border-radius: 12px; padding: 32px; text-align: center; }
+.error-banner { border-left: 4px solid #a93a2c; background: #fff0ed; padding: 14px; }
+
+@media (max-width: 700px) {
+  .create-panel { grid-template-columns: 1fr; }
+  .create-row, .study-card { align-items: stretch; flex-direction: column; }
+  .study-heading { align-items: flex-start; flex-direction: column; }
+}
