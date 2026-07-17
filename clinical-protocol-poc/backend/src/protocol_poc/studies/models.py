@@ -14,12 +14,18 @@ def now() -> datetime:
 
 class Study(Base):
     __tablename__ = "studies"
-    __table_args__ = (UniqueConstraint("id", "tenant_id", name="uq_study_id_tenant"),)
+    __table_args__ = (
+        UniqueConstraint("id", "tenant_id", name="uq_study_id_tenant"),
+        CheckConstraint("lifecycle IN ('active','archived')", name="ck_study_lifecycle"),
+    )
     id: Mapped[str] = mapped_column(String(128), primary_key=True, default=new_id)
     tenant_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    lifecycle: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class _StudyEntity:
