@@ -103,7 +103,10 @@ export function StudyDashboard({
       <header className="hero">
         <p className="eyebrow">Clinical Protocol POC</p>
         <h1>Study workspace</h1>
-        <p>Build and review protocol drafts using synthetic data only.</p>
+        <p>
+          This proof of concept uses synthetic data only. It is not validated, not for clinical use,
+          not for regulatory use, and not submission-ready.
+        </p>
       </header>
 
       <section className="create-panel" aria-labelledby="create-heading">
@@ -140,7 +143,11 @@ export function StudyDashboard({
         {studies.length === 0 ? (
           <div className="empty-state">
             <h3>No {view} studies</h3>
-            <p>This local proof of concept accepts synthetic data only. Do not use real patient or confidential protocol data.</p>
+            <p>
+              This local proof of concept accepts synthetic data only. It is not validated, not for
+              clinical use, not for regulatory use, and not submission-ready. Do not use real patient
+              or confidential protocol data.
+            </p>
           </div>
         ) : (
           <div className="study-grid">

@@ -53,7 +53,3 @@ export function PUT(request: Request, context: RouteContext) {
 export function PATCH(request: Request, context: RouteContext) {
   return proxy(request, context);
 }
-
-export function DELETE(request: Request, context: RouteContext) {
-  return proxy(request, context);
-}
