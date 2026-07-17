@@ -1,4 +1,5 @@
 .worktrees/
+.superpowers/
 .git.backup*/
 .DS_Store
 .Rhistory
