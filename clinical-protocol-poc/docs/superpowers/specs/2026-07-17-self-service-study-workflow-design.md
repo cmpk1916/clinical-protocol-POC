@@ -1,7 +1,7 @@
 # Self-Service Study Workflow Design
 
 **Date:** 2026-07-17
-**Status:** Design approved; pending written-spec review
+**Status:** Approved for implementation planning
 **Scope:** Turn the synthetic clinical protocol POC into a resumable, single-user local application where a user can create a study, upload supported DOCX inputs, review deterministic facts and draft passages, export the existing three-artifact package, and archive or restore studies.
 
 ## Problem
