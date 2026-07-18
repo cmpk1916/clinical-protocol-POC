@@ -1,12 +1,19 @@
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from protocol_poc.audit.service import AuditService
-from protocol_poc.files.models import StudyInput
+from protocol_poc.files.models import FileRecord, FileVersion, StudyInput
 from protocol_poc.ingest.service import IngestResult, IngestService, UploadInput
 from protocol_poc.studies.document_contract import ContractFinding, DocumentContract
+from protocol_poc.studies.local_extractor import (
+    LOCAL_EXTRACTOR_VERSION,
+    ExtractionFinding,
+    LocalExtractor,
+)
+from protocol_poc.studies.models import Fact, FactVersion, ProcessingAttempt, now
 from protocol_poc.studies.service import StudyService
 from protocol_poc.tenancy import TenantContext, require_tenant_context
 
@@ -28,6 +35,23 @@ class UploadOutcome:
         return self.version_id
 
 
+@dataclass(frozen=True, slots=True)
+class ProcessingOutcome:
+    attempt_id: str
+    status: str
+    findings: tuple[ExtractionFinding, ...]
+    synopsis_version_id: str
+    extractor_version: str = LOCAL_EXTRACTOR_VERSION
+
+
+class ProcessingNotFound(RuntimeError):
+    pass
+
+
+class ProcessingConflict(RuntimeError):
+    pass
+
+
 class DocumentWorkflowService:
     def __init__(
         self,
@@ -38,6 +62,7 @@ class DocumentWorkflowService:
         self._session = session
         self._ingest = ingest
         self._contract = contract or DocumentContract()
+        self._extractor = LocalExtractor()
 
     def upload(
         self, ctx: TenantContext, study_id: str, upload: UploadInput
@@ -123,6 +148,168 @@ class DocumentWorkflowService:
             (),
             current.current_file_version_id,
             impact,
+        )
+
+    def process(
+        self, ctx: TenantContext, study_id: str, file_version_id: str
+    ) -> ProcessingOutcome:
+        context = require_tenant_context(ctx)
+        StudyService(self._session).require_active(context, study_id)
+        current = self._session.scalar(
+            select(StudyInput).where(
+                StudyInput.tenant_id == context.tenant_id,
+                StudyInput.study_id == study_id,
+                StudyInput.role == "synopsis",
+                StudyInput.current_file_version_id == file_version_id,
+            )
+        )
+        version = self._session.scalar(
+            select(FileVersion)
+            .join(FileRecord, FileRecord.id == FileVersion.file_record_id)
+            .where(
+                FileVersion.id == file_version_id,
+                FileVersion.tenant_id == context.tenant_id,
+                FileRecord.study_id == study_id,
+                FileRecord.role == "synopsis",
+            )
+        )
+        if current is None or version is None:
+            raise ProcessingNotFound("current synopsis version not found")
+        active = self._session.scalar(
+            select(ProcessingAttempt).where(
+                ProcessingAttempt.tenant_id == context.tenant_id,
+                ProcessingAttempt.study_id == study_id,
+                ProcessingAttempt.synopsis_version_id == file_version_id,
+                ProcessingAttempt.status.in_(("pending", "processing")),
+            )
+        )
+        if active is not None:
+            raise ProcessingConflict("processing is already active")
+        existing = self._session.scalar(
+            select(ProcessingAttempt).where(
+                ProcessingAttempt.tenant_id == context.tenant_id,
+                ProcessingAttempt.study_id == study_id,
+                ProcessingAttempt.synopsis_version_id == file_version_id,
+                ProcessingAttempt.status == "succeeded",
+            )
+        )
+        if existing is not None:
+            return self._processing_outcome(existing)
+        return self._run_processing(context, study_id, file_version_id)
+
+    def retry(
+        self, ctx: TenantContext, study_id: str, attempt_id: str
+    ) -> ProcessingOutcome:
+        context = require_tenant_context(ctx)
+        StudyService(self._session).require_active(context, study_id)
+        attempt = self._session.scalar(
+            select(ProcessingAttempt).where(
+                ProcessingAttempt.id == attempt_id,
+                ProcessingAttempt.tenant_id == context.tenant_id,
+                ProcessingAttempt.study_id == study_id,
+            )
+        )
+        if attempt is None:
+            raise ProcessingNotFound("processing attempt not found")
+        if attempt.status != "failed":
+            raise ProcessingConflict("only failed attempts may be retried")
+        current = self._session.scalar(
+            select(StudyInput).where(
+                StudyInput.tenant_id == context.tenant_id,
+                StudyInput.study_id == study_id,
+                StudyInput.role == "synopsis",
+                StudyInput.current_file_version_id == attempt.synopsis_version_id,
+            )
+        )
+        if current is None:
+            raise ProcessingNotFound("processing attempt synopsis is no longer current")
+        return self._run_processing(context, study_id, attempt.synopsis_version_id)
+
+    def _run_processing(
+        self, ctx: TenantContext, study_id: str, file_version_id: str
+    ) -> ProcessingOutcome:
+        evidence = self._ingest.evidence_for_version(ctx, file_version_id)
+        proposal = self._extractor.extract(evidence)
+        attempt = ProcessingAttempt(
+            tenant_id=ctx.tenant_id,
+            study_id=study_id,
+            synopsis_version_id=file_version_id,
+            extractor_name="local-rules",
+            extractor_version=proposal.extractor_version,
+            status="processing",
+            findings_json=[],
+        )
+        self._session.add(attempt)
+        try:
+            self._session.flush()
+        except IntegrityError as error:
+            self._session.rollback()
+            raise ProcessingConflict("processing is already active") from error
+        if proposal.findings:
+            attempt.status = "failed"
+            attempt.error_code = "extraction_findings"
+            attempt.findings_json = [asdict(finding) for finding in proposal.findings]
+            attempt.completed_at = now()
+            AuditService(self._session).append(
+                ctx,
+                "synopsis.processing_failed",
+                "processing_attempt",
+                attempt.id,
+                {"finding_codes": [finding.code for finding in proposal.findings]},
+            )
+            self._session.commit()
+            return self._processing_outcome(attempt, proposal.findings)
+        for candidate in proposal.candidates:
+            fact = Fact(
+                tenant_id=ctx.tenant_id,
+                study_id=study_id,
+                processing_attempt_id=attempt.id,
+                kind=candidate.kind,
+                status="candidate",
+                critical=candidate.critical,
+                current_version=1,
+            )
+            self._session.add(fact)
+            self._session.flush()
+            self._session.add(
+                FactVersion(
+                    tenant_id=ctx.tenant_id,
+                    fact_id=fact.id,
+                    version=1,
+                    value_json=candidate.value_json,
+                    confidence=candidate.confidence,
+                    source_evidence_id=candidate.source_evidence_id,
+                    is_current=True,
+                )
+            )
+        attempt.status = "succeeded"
+        attempt.completed_at = now()
+        AuditService(self._session).append(
+            ctx,
+            "synopsis.processing_succeeded",
+            "processing_attempt",
+            attempt.id,
+            {"candidate_count": len(proposal.candidates)},
+        )
+        self._session.commit()
+        return self._processing_outcome(attempt)
+
+    @staticmethod
+    def _processing_outcome(
+        attempt: ProcessingAttempt,
+        findings: tuple[ExtractionFinding, ...] | None = None,
+    ) -> ProcessingOutcome:
+        if findings is None:
+            findings = tuple(
+                ExtractionFinding(item["code"], item["field"], item["message"])
+                for item in attempt.findings_json
+            )
+        return ProcessingOutcome(
+            attempt.id,
+            attempt.status,
+            findings,
+            attempt.synopsis_version_id,
+            attempt.extractor_version,
         )
 
     @staticmethod

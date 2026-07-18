@@ -60,7 +60,7 @@ def supported_synopsis(short_title: str = "SYN-1") -> bytes:
         "Endpoints",
         "Endpoint: Response at Week 8",
         "Arms and Interventions",
-        "Arm: Experimental; Intervention: Example drug",
+        "Arm: Experimental; Intervention: Example drug 10 mg once daily",
         "Study Population",
         "Population: Adults with synthetic condition",
         "Eligibility Criteria",
@@ -75,6 +75,16 @@ def supported_template() -> bytes:
         "[[SECTION:study_design]]",
         "[[SECTION:eligibility]]",
         "[[POC_DISCLAIMER]]",
+    )
+
+
+def synopsis_without_dose() -> bytes:
+    return docx(
+        "Study Identity", "Short title: SYN-1", "Objectives",
+        "Objective: Evaluate response", "Endpoints", "Endpoint: Response at Week 8",
+        "Arms and Interventions", "Arm: Experimental; Intervention: Example drug",
+        "Study Population", "Population: Adults with synthetic condition",
+        "Eligibility Criteria", "Eligibility: Age 18 years or older",
     )
 
 
@@ -295,3 +305,44 @@ def test_ingest_errors_have_stable_responses(
 
     assert response.status_code == status_code
     assert response.json()["detail"]["code"] == error_code
+
+
+def test_process_and_retry_routes_use_local_extractor_only(
+    upload_api: tuple[TestClient, Session, Settings], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, session, settings = upload_api
+    study = StudyService(session).create(
+        TenantContext("tenant", "actor-tenant"), "Synthetic Study"
+    )
+    headers = signed_headers(settings)
+    uploaded = client.post(
+        f"/api/studies/{study.id}/inputs",
+        headers=headers,
+        data={"role": "synopsis"},
+        files={
+            "file": (
+                "source.docx",
+                synopsis_without_dose(),
+                DOCX_CONTENT_TYPE,
+            )
+        },
+    )
+    # The assertion below guards against accidental reintroduction of the legacy gateway.
+    monkeypatch.setattr(
+        "protocol_poc.ai_gateway.service.AIGateway.run",
+        lambda *_args, **_kwargs: pytest.fail("self-service processing called AIGateway"),
+    )
+
+    processed = client.post(
+        f"/api/studies/{study.id}/inputs/{uploaded.json()['version_id']}/process",
+        headers=headers,
+    )
+    retried = client.post(
+        f"/api/studies/{study.id}/processing-attempts/{processed.json()['attempt_id']}/retry",
+        headers=headers,
+    )
+
+    assert processed.status_code == retried.status_code == 200
+    assert processed.json()["status"] == retried.json()["status"] == "failed"
+    assert processed.json()["attempt_id"] != retried.json()["attempt_id"]
+    assert processed.json()["findings"][0]["code"] == "SYNOPSIS_DOSE_MISSING"

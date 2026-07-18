@@ -41,8 +41,31 @@ class ReviewCommand(BaseModel):
 @router.get("/studies/{study_id}/fact-review")
 def review_queue(study_id: str, request: Request, session: Session = Depends(database_session)) -> dict[str, object]:
     ctx = identity(request)
-    facts = FactReviewService(session).review_queue(ctx, study_id)
-    return {"items": [{"id": fact.id, "kind": fact.kind, "status": fact.status, "critical": fact.critical, "version": fact.current_version} for fact in facts]}
+    items = FactReviewService(session).review_items(ctx, study_id)
+    return {"items": [
+        {
+            "id": item.fact.id,
+            "kind": item.fact.kind,
+            "status": item.fact.status,
+            "current_value": item.value,
+            "confidence": item.confidence,
+            "source_evidence": (
+                {
+                    "id": item.evidence_id,
+                    "location": item.evidence_location,
+                    "text": item.evidence_text,
+                }
+                if item.evidence_id is not None
+                else None
+            ),
+            "critical": item.fact.critical,
+            "version": item.fact.current_version,
+            "extractor_version": item.extractor_version,
+            "synopsis_version_id": item.synopsis_version_id,
+            "downstream_impact": list(item.downstream_impact),
+        }
+        for item in items
+    ]}
 
 
 @router.post("/facts/{fact_id}/review")

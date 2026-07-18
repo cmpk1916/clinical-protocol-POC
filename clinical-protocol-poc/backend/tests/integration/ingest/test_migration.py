@@ -26,5 +26,15 @@ def test_files_migration_upgrade_constraints_and_downgrade(tmp_path: Path, monke
     assert "uq_passage_version_id_tenant" in {
         item["name"] for item in inspector.get_unique_constraints("passage_versions")
     }
+    assert "processing_attempts" in inspector.get_table_names()
+    assert "uq_processing_attempt_active" in {
+        item["name"] for item in inspector.get_indexes("processing_attempts")
+    }
+    assert "processing_attempt_id" in {
+        item["name"] for item in inspector.get_columns("facts")
+    }
+    assert "confidence" in {
+        item["name"] for item in inspector.get_columns("fact_versions")
+    }
     command.downgrade(config, "base")
     assert inspect(create_engine(url)).get_table_names() == ["alembic_version"]

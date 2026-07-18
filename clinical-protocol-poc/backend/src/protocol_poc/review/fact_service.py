@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import case, select
@@ -6,7 +7,8 @@ from sqlalchemy.orm import Session
 from protocol_poc.audit.service import AuditService
 from protocol_poc.review.conflicts import FactConflict
 from protocol_poc.review.impact_service import ImpactService
-from protocol_poc.studies.models import Fact, FactVersion
+from protocol_poc.files.models import SourceEvidence
+from protocol_poc.studies.models import Fact, FactVersion, ProcessingAttempt
 from protocol_poc.tenancy import TenantContext, require_tenant_context
 
 
@@ -28,6 +30,19 @@ class UnresolvedConflict(FactReviewError):
 
 class VersionConflict(FactReviewError):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class FactReviewItem:
+    fact: Fact
+    value: dict[str, Any]
+    confidence: float | None
+    evidence_id: str | None
+    evidence_location: dict[str, Any] | None
+    evidence_text: str | None
+    extractor_version: str | None
+    synopsis_version_id: str | None
+    downstream_impact: tuple[str, ...]
 
 
 class FactReviewService:
@@ -72,7 +87,7 @@ class FactReviewService:
         fact.current_version += 1
         fact.status = "approved"
         fact.deferred = False
-        self.session.add(FactVersion(tenant_id=ctx.tenant_id, fact_id=fact.id, version=fact.current_version, value_json=value_json, source_evidence_id=current.source_evidence_id, is_current=True, rationale=rationale))
+        self.session.add(FactVersion(tenant_id=ctx.tenant_id, fact_id=fact.id, version=fact.current_version, value_json=value_json, confidence=current.confidence, source_evidence_id=current.source_evidence_id, is_current=True, rationale=rationale))
         self.audit.append(ctx, "fact.corrected_and_approved", "fact", fact.id, {"version": fact.current_version, "rationale": rationale, "explicitly_confirmed": explicitly_confirmed})
         ImpactService(self.session).invalidate_for_fact(ctx, fact.id)
         return fact
@@ -115,3 +130,64 @@ class FactReviewService:
             Fact.deferred.is_(False),
         ).order_by(priority, Fact.id)
         return list(self.session.scalars(statement))
+
+    def review_items(self, ctx: TenantContext, study_id: str) -> list[FactReviewItem]:
+        facts = self.review_queue(ctx, study_id)
+        if not facts:
+            return []
+        fact_ids = [fact.id for fact in facts]
+        statement = (
+            select(FactVersion, SourceEvidence, ProcessingAttempt)
+            .outerjoin(
+                SourceEvidence,
+                (SourceEvidence.id == FactVersion.source_evidence_id)
+                & (SourceEvidence.tenant_id == FactVersion.tenant_id),
+            )
+            .join(
+                Fact,
+                (Fact.id == FactVersion.fact_id) & (Fact.tenant_id == FactVersion.tenant_id),
+            )
+            .outerjoin(
+                ProcessingAttempt,
+                (ProcessingAttempt.id == Fact.processing_attempt_id)
+                & (ProcessingAttempt.tenant_id == Fact.tenant_id),
+            )
+            .where(FactVersion.fact_id.in_(fact_ids), FactVersion.is_current.is_(True))
+        )
+        by_fact = {version.fact_id: (version, evidence, attempt) for version, evidence, attempt in self.session.execute(statement)}
+        items: list[FactReviewItem] = []
+        for fact in facts:
+            version, evidence, attempt = by_fact[fact.id]
+            embedded_confidence = version.value_json.get("confidence")
+            confidence = version.confidence
+            if confidence is None and isinstance(embedded_confidence, (int, float)):
+                confidence = float(embedded_confidence)
+            items.append(
+                FactReviewItem(
+                    fact=fact,
+                    value=version.value_json,
+                    confidence=confidence,
+                    evidence_id=evidence.id if evidence is not None else None,
+                    evidence_location=evidence.location_json if evidence is not None else None,
+                    evidence_text=evidence.text if evidence is not None else None,
+                    extractor_version=attempt.extractor_version if attempt is not None else None,
+                    synopsis_version_id=attempt.synopsis_version_id if attempt is not None else None,
+                    downstream_impact=self._downstream_impact(fact.kind),
+                )
+            )
+        return items
+
+    @staticmethod
+    def _downstream_impact(kind: str) -> tuple[str, ...]:
+        by_kind = {
+            "study_identity": ("synopsis",),
+            "population": ("synopsis",),
+            "objective": ("objectives_endpoints",),
+            "endpoint": ("objectives_endpoints",),
+            "timepoint": ("objectives_endpoints",),
+            "arm": ("study_design",),
+            "intervention": ("study_design",),
+            "dose": ("study_design",),
+            "eligibility": ("eligibility",),
+        }
+        return by_kind.get(kind, ())

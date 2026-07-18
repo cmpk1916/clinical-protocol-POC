@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKeyConstraint, Index, Integer, JSON, String, Text, UniqueConstraint, text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKeyConstraint, Index, Integer, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from protocol_poc.common.ids import new_id
@@ -91,16 +91,63 @@ class EndpointRecord(_StudyEntity, Base):
     timepoint_id: Mapped[str | None] = mapped_column(String(128))
 
 
+class ProcessingAttempt(Base):
+    __tablename__ = "processing_attempts"
+    __table_args__ = (
+        UniqueConstraint("id", "tenant_id", name="uq_processing_attempt_id_tenant"),
+        ForeignKeyConstraint(
+            ["study_id", "tenant_id"],
+            ["studies.id", "studies.tenant_id"],
+            name="fk_processing_attempt_study_tenant",
+        ),
+        ForeignKeyConstraint(
+            ["synopsis_version_id", "tenant_id"],
+            ["file_versions.id", "file_versions.tenant_id"],
+            name="fk_processing_attempt_version_tenant",
+        ),
+        CheckConstraint(
+            "status IN ('pending','processing','succeeded','failed')",
+            name="ck_processing_attempt_status",
+        ),
+        Index(
+            "uq_processing_attempt_active",
+            "tenant_id",
+            "study_id",
+            "synopsis_version_id",
+            unique=True,
+            sqlite_where=text("status IN ('pending','processing')"),
+            postgresql_where=text("status IN ('pending','processing')"),
+        ),
+    )
+    id: Mapped[str] = mapped_column(String(128), primary_key=True, default=new_id)
+    tenant_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    study_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    synopsis_version_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    extractor_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    extractor_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    findings_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class Fact(Base):
     __tablename__ = "facts"
     __table_args__ = (
         UniqueConstraint("id", "tenant_id", name="uq_fact_id_tenant"),
         ForeignKeyConstraint(["study_id", "tenant_id"], ["studies.id", "studies.tenant_id"], name="fk_fact_study_tenant"),
+        ForeignKeyConstraint(
+            ["processing_attempt_id", "tenant_id"],
+            ["processing_attempts.id", "processing_attempts.tenant_id"],
+            name="fk_fact_processing_attempt_tenant",
+        ),
         CheckConstraint("status IN ('candidate','approved','rejected','superseded','conflicted')", name="ck_fact_status"),
     )
     id: Mapped[str] = mapped_column(String(128), primary_key=True, default=new_id)
     tenant_id: Mapped[str] = mapped_column(String(128), nullable=False)
     study_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    processing_attempt_id: Mapped[str | None] = mapped_column(String(128))
     kind: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="candidate")
     critical: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -120,6 +167,7 @@ class FactVersion(Base):
     fact_id: Mapped[str] = mapped_column(String(128), nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     value_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     source_evidence_id: Mapped[str | None] = mapped_column(String(128))
     is_current: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     rationale: Mapped[str | None] = mapped_column(Text)
