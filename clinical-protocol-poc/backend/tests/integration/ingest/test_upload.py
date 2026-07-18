@@ -22,6 +22,7 @@ from protocol_poc.ingest.service import CleanupService, IngestService, UploadInp
 from protocol_poc.ingest.routes import database_session
 from protocol_poc.config import Settings
 from protocol_poc.identity import canonical_identity
+from protocol_poc.studies.service import StudyService
 from protocol_poc.tenancy import TenantContext
 
 
@@ -49,17 +50,20 @@ def test_real_multipart_upload_is_idempotent_and_versions(tmp_path: Path, monkey
     settings = Settings(local_storage_path=str(tmp_path), identity_hmac_secret="test-secret")
     monkeypatch.setattr(routes, "get_settings", lambda: settings)  # type: ignore[attr-defined]
     client = TestClient(app)
+    study_id = StudyService(session).create(
+        TenantContext("tenant", "actor"), "Synthetic Study"
+    ).id
     timestamp = str(int(time.time()))
     signature = hmac.new(b"test-secret", canonical_identity("tenant", "actor", timestamp), hashlib.sha256).hexdigest()
     headers = {"X-Tenant-ID": "tenant", "X-Actor-ID": "actor", "X-Identity-Timestamp": timestamp, "X-Identity-Signature": signature}
     files = {"file": ("source.docx", docx("first"), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")}
-    first = client.post("/api/studies/study/inputs", headers=headers, data={"role": "synopsis"}, files=files)
-    same = client.post("/api/studies/study/inputs", headers=headers, data={"role": "synopsis"}, files=files)
-    changed = client.post("/api/studies/study/inputs", headers=headers, data={"role": "synopsis"}, files={"file": ("source.docx", docx("second"), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")})
+    first = client.post(f"/api/studies/{study_id}/inputs", headers=headers, data={"role": "synopsis"}, files=files)
+    same = client.post(f"/api/studies/{study_id}/inputs", headers=headers, data={"role": "synopsis"}, files=files)
+    changed = client.post(f"/api/studies/{study_id}/inputs", headers=headers, data={"role": "synopsis"}, files={"file": ("source.docx", docx("second"), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")})
     assert first.status_code == 201
     assert same.json()["version_id"] == first.json()["version_id"]
     assert changed.json()["version"] == 2
-    rejected = client.post("/api/studies/study/inputs", headers=headers, data={"role": "template"}, files={"file": ("bad.txt", b"text", "text/plain")})
+    rejected = client.post(f"/api/studies/{study_id}/inputs", headers=headers, data={"role": "template"}, files={"file": ("bad.txt", b"text", "text/plain")})
     assert rejected.status_code == 422
     assert session.scalar(select(IngestJob).where(IngestJob.role == "template")).status == "failed"  # type: ignore[union-attr]
     session.close()

@@ -12,7 +12,7 @@ from protocol_poc.files.models import FileVersion, SourceEvidence, StudyInput
 from protocol_poc.files.service import LocalFileStorage
 from protocol_poc.ingest.service import DOCX_CONTENT_TYPE, IngestService, UploadInput
 from protocol_poc.studies.document_workflow import DocumentWorkflowService
-from protocol_poc.studies.service import StudyArchived, StudyService
+from protocol_poc.studies.service import StudyArchived, StudyNotFound, StudyService
 from protocol_poc.tenancy import TenantContext
 
 
@@ -76,6 +76,21 @@ def upload(content: bytes) -> UploadInput:
     return UploadInput("synopsis", "synopsis.docx", DOCX_CONTENT_TYPE, content)
 
 
+def template_upload() -> UploadInput:
+    return UploadInput(
+        "template",
+        "template.docx",
+        DOCX_CONTENT_TYPE,
+        docx(
+            "[[SECTION:synopsis]]",
+            "[[SECTION:objectives_endpoints]]",
+            "[[SECTION:study_design]]",
+            "[[SECTION:eligibility]]",
+            "[[POC_DISCLAIMER]]",
+        ),
+    )
+
+
 def test_first_valid_upload_activates_version_one(
     session: Session, tmp_path: Path
 ) -> None:
@@ -94,6 +109,19 @@ def test_first_valid_upload_activates_version_one(
         "conforming",
         1,
     )
+
+
+def test_first_valid_template_upload_activates_template_role(
+    session: Session, tmp_path: Path
+) -> None:
+    ctx = TenantContext("tenant", "actor")
+    study = StudyService(session).create(ctx, "Synthetic Study")
+
+    outcome = workflow(session, tmp_path).upload(ctx, study.id, template_upload())
+    current = session.scalar(select(StudyInput))
+
+    assert outcome.status == "activated"
+    assert current is not None and current.role == "template"
 
 
 def test_invalid_upload_records_version_and_findings_without_activation(
@@ -167,5 +195,22 @@ def test_upload_rejects_archived_study_before_ingest(
 
     with pytest.raises(StudyArchived):
         workflow(session, tmp_path).upload(ctx, study.id, upload(supported_synopsis()))
+
+    assert session.scalars(select(FileVersion)).all() == []
+
+
+def test_upload_rejects_cross_tenant_study_before_ingest(
+    session: Session, tmp_path: Path
+) -> None:
+    study = StudyService(session).create(
+        TenantContext("tenant-a", "actor-a"), "Synthetic Study"
+    )
+
+    with pytest.raises(StudyNotFound):
+        workflow(session, tmp_path).upload(
+            TenantContext("tenant-b", "actor-b"),
+            study.id,
+            upload(supported_synopsis()),
+        )
 
     assert session.scalars(select(FileVersion)).all() == []

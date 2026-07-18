@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session
 from protocol_poc.config import get_settings
 from protocol_poc.identity import IdentityVerificationError, verify_identity_headers
 from protocol_poc.studies.models import Study
-from protocol_poc.studies.document_workflow import UploadOutcome
 from protocol_poc.studies.service import (
     StudyArchived,
     StudyNotFound,
@@ -65,23 +64,6 @@ def _study_payload(study: Study) -> dict[str, object]:
         "created_at": study.created_at,
         "updated_at": study.updated_at,
         "archived_at": study.archived_at,
-    }
-
-
-def upload_outcome_payload(outcome: UploadOutcome) -> dict[str, object]:
-    return {
-        "job_id": outcome.job_id,
-        "file_id": outcome.file_id,
-        "version_id": outcome.version_id,
-        "version": outcome.version,
-        "checksum_sha256": outcome.checksum_sha256,
-        "status": outcome.status,
-        "current_file_version_id": outcome.current_file_version_id,
-        "findings": [
-            {"code": finding.code, "field": finding.field, "message": finding.message}
-            for finding in outcome.findings
-        ],
-        "replacement_impact": list(outcome.replacement_impact),
     }
 
 
