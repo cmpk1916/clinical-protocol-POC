@@ -148,6 +148,20 @@ class IngestService:
         finally:
             _release_scope_lock(scope, scope_lock)
 
+    def evidence_for_version(
+        self, ctx: TenantContext, version_id: str
+    ) -> tuple[SourceEvidence, ...]:
+        context = require_tenant_context(ctx)
+        evidence = self._session.scalars(
+            select(SourceEvidence)
+            .where(
+                SourceEvidence.tenant_id == context.tenant_id,
+                SourceEvidence.file_version_id == version_id,
+            )
+            .order_by(SourceEvidence.ordinal)
+        ).all()
+        return tuple(evidence)
+
     @staticmethod
     def _safe_filename(filename: str) -> str:
         value = PurePath(filename.replace("\\", "/")).name.strip()

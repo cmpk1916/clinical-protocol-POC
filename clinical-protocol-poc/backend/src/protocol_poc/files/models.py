@@ -53,6 +53,40 @@ class FileVersion(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
+class StudyInput(Base):
+    __tablename__ = "study_inputs"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "study_id", "role", name="uq_study_input_role"),
+        UniqueConstraint("id", "tenant_id", name="uq_study_input_id_tenant"),
+        ForeignKeyConstraint(
+            ["study_id", "tenant_id"],
+            ["studies.id", "studies.tenant_id"],
+            name="fk_study_input_study_tenant",
+        ),
+        ForeignKeyConstraint(
+            ["current_file_version_id", "tenant_id"],
+            ["file_versions.id", "file_versions.tenant_id"],
+            name="fk_study_input_version_tenant",
+        ),
+        CheckConstraint("role IN ('synopsis', 'template')", name="ck_study_input_role"),
+        CheckConstraint(
+            "conformance_status IN ('conforming')",
+            name="ck_study_input_conformance_status",
+        ),
+        CheckConstraint("revision > 0", name="ck_study_input_revision_positive"),
+        Index("ix_study_inputs_tenant_study", "tenant_id", "study_id"),
+    )
+    id: Mapped[str] = mapped_column(String(26), primary_key=True, default=new_id)
+    tenant_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    study_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    current_file_version_id: Mapped[str] = mapped_column(String(26), nullable=False)
+    conformance_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 class SourceEvidence(Base):
     __tablename__ = "source_evidence"
     __table_args__ = (
