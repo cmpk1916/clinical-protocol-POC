@@ -2,6 +2,8 @@ from dataclasses import dataclass
 import re
 from typing import Any, Sequence
 
+from protocol_poc.studies.document_contract import DocumentContract
+
 
 LOCAL_EXTRACTOR_VERSION = "local-rules-v1"
 
@@ -31,17 +33,12 @@ class ExtractionProposal:
     def __post_init__(self) -> None:
         if self.candidates and self.findings:
             raise ValueError("an extraction proposal cannot contain candidates and findings")
+        if not self.candidates and not self.findings:
+            raise ValueError("an extraction proposal must contain candidates or findings")
 
 
 class LocalExtractor:
-    _headings = {
-        "study_identity": "study identity",
-        "objectives": "objectives",
-        "endpoints": "endpoints",
-        "arms_interventions": "arms and interventions",
-        "population": "study population",
-        "eligibility": "eligibility criteria",
-    }
+    _headings = DocumentContract.synopsis_headings()
     _labels = {
         "study_identity": "short title:",
         "objectives": "objective:",
@@ -65,11 +62,37 @@ class LocalExtractor:
             if self._text(item).strip()
         )
         findings: list[ExtractionFinding] = []
-        for field, heading in self._headings.items():
-            if sum(normalized == heading for _, _, normalized in items) > 1:
+        if DocumentContract.unsupported_synopsis_headings(
+            tuple(text for _, text, _ in items)
+        ):
+            findings.append(
+                ExtractionFinding(
+                    "SYNOPSIS_HEADING_UNSUPPORTED",
+                    "synopsis",
+                    "The synopsis contains a heading outside the supported vocabulary.",
+                )
+            )
+        for field, headings in self._headings.items():
+            heading_matches = [
+                normalized for _, _, normalized in items if normalized in headings
+            ]
+            if not heading_matches:
                 findings.append(
                     ExtractionFinding(
-                        "SYNOPSIS_HEADING_AMBIGUOUS",
+                        "SYNOPSIS_HEADING_MISSING",
+                        field,
+                        f"The supported synopsis requires exactly one {field.replace('_', ' ')} heading.",
+                    )
+                )
+            elif len(heading_matches) > 1:
+                code = (
+                    "SYNOPSIS_HEADING_DUPLICATE"
+                    if len(set(heading_matches)) == 1
+                    else "SYNOPSIS_HEADING_AMBIGUOUS"
+                )
+                findings.append(
+                    ExtractionFinding(
+                        code,
                         field,
                         f"The supported synopsis requires exactly one {field.replace('_', ' ')} heading.",
                     )
@@ -79,13 +102,13 @@ class LocalExtractor:
 
         values: dict[str, tuple[str, str]] = {}
         for field, label in self._labels.items():
-            matches = []
+            label_matches: list[tuple[str, str]] = []
             for item_id, text, _normalized in items:
                 value = self._label_value(text, label)
                 if value:
-                    matches.append((item_id, value))
-            if len(matches) != 1:
-                code = "SYNOPSIS_VALUE_MISSING" if not matches else "SYNOPSIS_VALUE_AMBIGUOUS"
+                    label_matches.append((item_id, value))
+            if len(label_matches) != 1:
+                code = "SYNOPSIS_VALUE_MISSING" if not label_matches else "SYNOPSIS_VALUE_AMBIGUOUS"
                 findings.append(
                     ExtractionFinding(
                         code,
@@ -94,7 +117,7 @@ class LocalExtractor:
                     )
                 )
             else:
-                values[field] = matches[0]
+                values[field] = label_matches[0]
         if findings:
             return ExtractionProposal((), tuple(findings))
 

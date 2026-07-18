@@ -15,6 +15,7 @@ from protocol_poc.tenancy import TenantContext
 @dataclass(frozen=True)
 class EvidenceRef:
     id: str
+    version_id: str
     location: dict[str, Any]
 
 
@@ -46,6 +47,7 @@ class ExtractionService:
                     "confidence": candidate.confidence,
                 },
                 source_evidence_id=candidate.source_evidence_id,
+                source_evidence_version_id=by_id[candidate.source_evidence_id].version_id,
                 is_current=True,
             )
             self.session.add_all([fact, version])

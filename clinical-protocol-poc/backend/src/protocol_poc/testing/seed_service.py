@@ -68,7 +68,9 @@ def seed_synthetic_study(
     session.add(FactVersion(
         id="fact-dose-v1", tenant_id=tenant_id, fact_id="fact-dose", version=1,
         value_json={"kind": "dose", "value": "10", "unit": "mg", "frequency": "once daily"},
-        source_evidence_id="evidence-dose", is_current=True,
+        source_evidence_id="evidence-dose",
+        source_evidence_version_id="synopsis-v1",
+        is_current=True,
     ))
 
     for section in SECTIONS:

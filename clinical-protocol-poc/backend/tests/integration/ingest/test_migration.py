@@ -2,7 +2,9 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, inspect
+import pytest
+from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.exc import IntegrityError
 
 
 def test_files_migration_upgrade_constraints_and_downgrade(tmp_path: Path, monkeypatch: object) -> None:
@@ -27,14 +29,107 @@ def test_files_migration_upgrade_constraints_and_downgrade(tmp_path: Path, monke
         item["name"] for item in inspector.get_unique_constraints("passage_versions")
     }
     assert "processing_attempts" in inspector.get_table_names()
-    assert "uq_processing_attempt_active" in {
-        item["name"] for item in inspector.get_indexes("processing_attempts")
+    attempt_indexes = {
+        item["name"]: item for item in inspector.get_indexes("processing_attempts")
     }
+    assert "uq_processing_attempt_active" in attempt_indexes
+    assert attempt_indexes["uq_processing_attempt_active"]["unique"] == 1
+    predicate = str(
+        attempt_indexes["uq_processing_attempt_active"]["dialect_options"][
+            "sqlite_where"
+        ]
+    )
+    assert "pending" in predicate and "processing" in predicate
     assert "processing_attempt_id" in {
         item["name"] for item in inspector.get_columns("facts")
     }
     assert "confidence" in {
         item["name"] for item in inspector.get_columns("fact_versions")
     }
+    assert "ck_fact_version_evidence_pair" in {
+        item["name"] for item in inspector.get_check_constraints("fact_versions")
+    }
+    evidence_foreign_keys = {
+        item["name"]: item for item in inspector.get_foreign_keys("fact_versions")
+    }
+    assert evidence_foreign_keys["fk_fact_version_evidence_tenant_version"][
+        "constrained_columns"
+    ] == ["source_evidence_id", "tenant_id", "source_evidence_version_id"]
+    with create_engine(url).begin() as connection:
+        connection.execute(text("PRAGMA foreign_keys=ON"))
+        triggers = {
+            row[0]: row[1]
+            for row in connection.execute(
+                text(
+                    "SELECT name, sql FROM sqlite_master "
+                    "WHERE type = 'trigger' AND tbl_name = 'processing_attempts'"
+                )
+            )
+        }
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
+            "0010_processing_provenance"
+        )
+    assert {
+        "trg_processing_attempt_terminal_update",
+        "trg_processing_attempt_delete",
+    }.issubset(triggers)
+    update_trigger = triggers["trg_processing_attempt_terminal_update"]
+    assert "NEW.synopsis_version_id IS NOT OLD.synopsis_version_id" in update_trigger
+    assert "NEW.extractor_version IS NOT OLD.extractor_version" in update_trigger
+    engine = create_engine(url)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO studies "
+                "(id, tenant_id, name, version, lifecycle, created_at, updated_at) "
+                "VALUES ('study-a', 'tenant-a', 'Study', 1, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO file_records (id, tenant_id, study_id, role, created_at) "
+                "VALUES ('file-a', 'tenant-a', 'study-a', 'synopsis', CURRENT_TIMESTAMP)"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO file_versions "
+                "(id, tenant_id, file_record_id, version, display_filename, checksum_sha256, "
+                "size_bytes, content_type, storage_key, status, created_at) VALUES "
+                "('version-a', 'tenant-a', 'file-a', 1, 'synopsis.docx', :checksum, "
+                "1, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', "
+                "'tenant/version-a.docx', 'succeeded', CURRENT_TIMESTAMP)"
+            ),
+            {"checksum": "a" * 64},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO processing_attempts "
+                "(id, tenant_id, study_id, synopsis_version_id, extractor_name, "
+                "extractor_version, status, findings_json, started_at) VALUES "
+                "('attempt-a', 'tenant-a', 'study-a', 'version-a', 'local-rules', "
+                "'local-rules-v1', 'processing', '[]', CURRENT_TIMESTAMP)"
+            )
+        )
+    with pytest.raises(IntegrityError, match="immutable"):
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE processing_attempts SET status = 'succeeded', "
+                    "extractor_version = 'tampered' WHERE id = 'attempt-a'"
+                )
+            )
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE processing_attempts SET status = 'succeeded', "
+                "completed_at = CURRENT_TIMESTAMP WHERE id = 'attempt-a'"
+            )
+        )
+    with pytest.raises(IntegrityError, match="cannot be deleted"):
+        with engine.begin() as connection:
+            connection.execute(
+                text("DELETE FROM processing_attempts WHERE id = 'attempt-a'")
+            )
     command.downgrade(config, "base")
     assert inspect(create_engine(url)).get_table_names() == ["alembic_version"]

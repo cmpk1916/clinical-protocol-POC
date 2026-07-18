@@ -5,15 +5,21 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from protocol_poc.audit.service import AuditService
-from protocol_poc.files.models import FileRecord, FileVersion, StudyInput
+from protocol_poc.files.models import FileRecord, FileVersion, SourceEvidence, StudyInput
 from protocol_poc.ingest.service import IngestResult, IngestService, UploadInput
 from protocol_poc.studies.document_contract import ContractFinding, DocumentContract
 from protocol_poc.studies.local_extractor import (
     LOCAL_EXTRACTOR_VERSION,
     ExtractionFinding,
+    ExtractionProposal,
     LocalExtractor,
 )
-from protocol_poc.studies.models import Fact, FactVersion, ProcessingAttempt, now
+from protocol_poc.studies.models import (
+    Fact,
+    FactVersion,
+    ProcessingAttempt,
+    complete_processing_attempt,
+)
 from protocol_poc.studies.service import StudyService
 from protocol_poc.tenancy import TenantContext, require_tenant_context
 
@@ -228,37 +234,136 @@ class DocumentWorkflowService:
     def _run_processing(
         self, ctx: TenantContext, study_id: str, file_version_id: str
     ) -> ProcessingOutcome:
-        evidence = self._ingest.evidence_for_version(ctx, file_version_id)
-        proposal = self._extractor.extract(evidence)
         attempt = ProcessingAttempt(
             tenant_id=ctx.tenant_id,
             study_id=study_id,
             synopsis_version_id=file_version_id,
             extractor_name="local-rules",
-            extractor_version=proposal.extractor_version,
+            extractor_version=LOCAL_EXTRACTOR_VERSION,
             status="processing",
             findings_json=[],
         )
         self._session.add(attempt)
         try:
-            self._session.flush()
+            # Commit the active claim before reading evidence or running extraction.
+            # The partial unique index then protects the expensive portion of work.
+            self._session.commit()
         except IntegrityError as error:
             self._session.rollback()
             raise ProcessingConflict("processing is already active") from error
+
+        try:
+            evidence = self._ingest.evidence_for_version(ctx, file_version_id)
+        except Exception:
+            return self._fail_attempt(
+                ctx,
+                attempt,
+                "evidence_load_failed",
+                ExtractionFinding(
+                    "PROCESSING_EVIDENCE_LOAD_FAILED",
+                    "synopsis",
+                    "Synopsis evidence could not be loaded for deterministic processing.",
+                ),
+            )
+        try:
+            proposal = self._extractor.extract(evidence)
+        except Exception:
+            return self._fail_attempt(
+                ctx,
+                attempt,
+                "extractor_failed",
+                ExtractionFinding(
+                    "PROCESSING_EXTRACTOR_FAILED",
+                    "synopsis",
+                    "The deterministic synopsis extractor could not complete.",
+                ),
+            )
+
+        provenance_finding = self._validate_provenance(
+            ctx, file_version_id, evidence, proposal
+        )
+        if provenance_finding is not None:
+            return self._fail_attempt(
+                ctx,
+                attempt,
+                "invalid_evidence_provenance",
+                provenance_finding,
+            )
         if proposal.findings:
-            attempt.status = "failed"
-            attempt.error_code = "extraction_findings"
-            attempt.findings_json = [asdict(finding) for finding in proposal.findings]
-            attempt.completed_at = now()
+            return self._fail_attempt(
+                ctx, attempt, "extraction_findings", *proposal.findings
+            )
+
+        current = self._session.scalar(
+            select(StudyInput)
+            .where(
+                StudyInput.tenant_id == ctx.tenant_id,
+                StudyInput.study_id == study_id,
+                StudyInput.role == "synopsis",
+            )
+            .with_for_update()
+        )
+        if current is None or current.current_file_version_id != file_version_id:
+            return self._fail_attempt(
+                ctx,
+                attempt,
+                "synopsis_no_longer_current",
+                ExtractionFinding(
+                    "PROCESSING_SYNOPSIS_NO_LONGER_CURRENT",
+                    "synopsis",
+                    "The synopsis changed before extracted candidates could be persisted.",
+                ),
+            )
+
+        evidence_by_id = {item.id: item for item in evidence}
+        try:
+            self._persist_candidates(
+                ctx,
+                study_id,
+                attempt,
+                proposal,
+                evidence_by_id,
+            )
+            complete_processing_attempt(
+                self._session,
+                attempt,
+                status="succeeded",
+                error_code=None,
+                findings_json=[],
+            )
             AuditService(self._session).append(
                 ctx,
-                "synopsis.processing_failed",
+                "synopsis.processing_succeeded",
                 "processing_attempt",
                 attempt.id,
-                {"finding_codes": [finding.code for finding in proposal.findings]},
+                {"candidate_count": len(proposal.candidates)},
             )
             self._session.commit()
-            return self._processing_outcome(attempt, proposal.findings)
+        except Exception:
+            self._session.rollback()
+            persisted_attempt = self._session.get(ProcessingAttempt, attempt.id)
+            if persisted_attempt is None:
+                raise
+            return self._fail_attempt(
+                ctx,
+                persisted_attempt,
+                "candidate_persistence_failed",
+                ExtractionFinding(
+                    "PROCESSING_CANDIDATE_PERSISTENCE_FAILED",
+                    "synopsis",
+                    "Extracted candidates could not be persisted atomically.",
+                ),
+            )
+        return self._processing_outcome(attempt)
+
+    def _persist_candidates(
+        self,
+        ctx: TenantContext,
+        study_id: str,
+        attempt: ProcessingAttempt,
+        proposal: ExtractionProposal,
+        evidence_by_id: dict[str, SourceEvidence],
+    ) -> None:
         for candidate in proposal.candidates:
             fact = Fact(
                 tenant_id=ctx.tenant_id,
@@ -279,20 +384,61 @@ class DocumentWorkflowService:
                     value_json=candidate.value_json,
                     confidence=candidate.confidence,
                     source_evidence_id=candidate.source_evidence_id,
+                    source_evidence_version_id=evidence_by_id[
+                        candidate.source_evidence_id
+                    ].file_version_id,
                     is_current=True,
                 )
             )
-        attempt.status = "succeeded"
-        attempt.completed_at = now()
+
+    def _fail_attempt(
+        self,
+        ctx: TenantContext,
+        attempt: ProcessingAttempt,
+        error_code: str,
+        *findings: ExtractionFinding,
+    ) -> ProcessingOutcome:
+        complete_processing_attempt(
+            self._session,
+            attempt,
+            status="failed",
+            error_code=error_code,
+            findings_json=[asdict(finding) for finding in findings],
+        )
         AuditService(self._session).append(
             ctx,
-            "synopsis.processing_succeeded",
+            "synopsis.processing_failed",
             "processing_attempt",
             attempt.id,
-            {"candidate_count": len(proposal.candidates)},
+            {"finding_codes": [finding.code for finding in findings]},
         )
         self._session.commit()
-        return self._processing_outcome(attempt)
+        return self._processing_outcome(attempt, tuple(findings))
+
+    @staticmethod
+    def _validate_provenance(
+        ctx: TenantContext,
+        file_version_id: str,
+        evidence: tuple[SourceEvidence, ...],
+        proposal: ExtractionProposal,
+    ) -> ExtractionFinding | None:
+        evidence_by_id = {item.id: item for item in evidence}
+        evidence_is_exact = all(
+            item.tenant_id == ctx.tenant_id
+            and item.file_version_id == file_version_id
+            for item in evidence
+        )
+        candidate_ids_are_exact = all(
+            candidate.source_evidence_id in evidence_by_id
+            for candidate in proposal.candidates
+        )
+        if evidence_is_exact and candidate_ids_are_exact:
+            return None
+        return ExtractionFinding(
+            "PROCESSING_EVIDENCE_PROVENANCE_INVALID",
+            "synopsis",
+            "Candidate evidence must belong to the exact processed synopsis version.",
+        )
 
     @staticmethod
     def _processing_outcome(

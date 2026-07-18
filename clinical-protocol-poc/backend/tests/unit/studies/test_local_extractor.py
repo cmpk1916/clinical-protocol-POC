@@ -1,6 +1,12 @@
 from dataclasses import dataclass
 
-from protocol_poc.studies.local_extractor import LOCAL_EXTRACTOR_VERSION, LocalExtractor
+import pytest
+
+from protocol_poc.studies.local_extractor import (
+    LOCAL_EXTRACTOR_VERSION,
+    ExtractionProposal,
+    LocalExtractor,
+)
 
 
 @dataclass(frozen=True)
@@ -50,8 +56,72 @@ def test_ambiguous_heading_returns_stable_finding_and_no_candidates() -> None:
     proposal = LocalExtractor().extract(evidence)
     assert proposal.candidates == ()
     assert [(item.code, item.field) for item in proposal.findings] == [
-        ("SYNOPSIS_HEADING_AMBIGUOUS", "objectives")
+        ("SYNOPSIS_HEADING_DUPLICATE", "objectives")
     ]
+
+
+@pytest.mark.parametrize(
+    ("original", "alternative"),
+    [
+        ("Arms and Interventions", "Arms / Interventions"),
+        ("Study Population", "Population"),
+        ("Eligibility Criteria", "Eligibility"),
+    ],
+)
+def test_accepts_every_supported_document_contract_heading(
+    original: str, alternative: str
+) -> None:
+    evidence = tuple(
+        Evidence(item.id, alternative if item.text == original else item.text)
+        for item in supported_synopsis_evidence()
+    )
+
+    assert LocalExtractor().extract(evidence).findings == ()
+
+
+def test_distinct_supported_headings_for_one_field_are_ambiguous() -> None:
+    evidence = supported_synopsis_evidence() + (
+        Evidence("population-heading-2", "Population"),
+    )
+
+    proposal = LocalExtractor().extract(evidence)
+
+    assert proposal.candidates == ()
+    assert [(item.code, item.field) for item in proposal.findings] == [
+        ("SYNOPSIS_HEADING_AMBIGUOUS", "population")
+    ]
+
+
+def test_missing_supported_heading_has_stable_finding() -> None:
+    evidence = tuple(
+        item for item in supported_synopsis_evidence() if item.id != "objectives-heading"
+    )
+
+    proposal = LocalExtractor().extract(evidence)
+
+    assert proposal.candidates == ()
+    assert [(item.code, item.field) for item in proposal.findings] == [
+        ("SYNOPSIS_HEADING_MISSING", "objectives")
+    ]
+
+
+def test_unsupported_heading_is_reported_with_the_missing_canonical_heading() -> None:
+    evidence = tuple(
+        Evidence(item.id, "Goals" if item.id == "objectives-heading" else item.text)
+        for item in supported_synopsis_evidence()
+    )
+
+    proposal = LocalExtractor().extract(evidence)
+
+    assert [(item.code, item.field) for item in proposal.findings] == [
+        ("SYNOPSIS_HEADING_UNSUPPORTED", "synopsis"),
+        ("SYNOPSIS_HEADING_MISSING", "objectives"),
+    ]
+
+
+def test_extraction_proposal_rejects_empty_result() -> None:
+    with pytest.raises(ValueError, match="candidates or findings"):
+        ExtractionProposal((), ())
 
 
 def test_missing_dose_on_intervention_line_returns_finding_and_no_partial_candidates() -> None:

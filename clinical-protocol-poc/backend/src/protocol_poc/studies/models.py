@@ -1,15 +1,20 @@
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKeyConstraint, Index, Integer, JSON, String, Text, UniqueConstraint, text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Delete, Float, ForeignKeyConstraint, Index, Integer, JSON, String, Text, UniqueConstraint, Update, event, inspect, text
+from sqlalchemy.orm import Mapped, ORMExecuteState, Session, mapped_column
 
 from protocol_poc.common.ids import new_id
 from protocol_poc.db import Base
+from protocol_poc.files.models import SourceEvidence as _SourceEvidence  # noqa: F401
 
 
 def now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+class ImmutableProcessingAttemptError(RuntimeError):
+    """Raised when processing attempt history is mutated outside its workflow."""
 
 
 class Study(Base):
@@ -159,7 +164,21 @@ class FactVersion(Base):
     __tablename__ = "fact_versions"
     __table_args__ = (
         UniqueConstraint("fact_id", "version", name="uq_fact_version_number"),
+        CheckConstraint(
+            "(source_evidence_id IS NULL AND source_evidence_version_id IS NULL) "
+            "OR (source_evidence_id IS NOT NULL AND source_evidence_version_id IS NOT NULL)",
+            name="ck_fact_version_evidence_pair",
+        ),
         ForeignKeyConstraint(["fact_id", "tenant_id"], ["facts.id", "facts.tenant_id"], name="fk_fact_version_fact_tenant"),
+        ForeignKeyConstraint(
+            ["source_evidence_id", "tenant_id", "source_evidence_version_id"],
+            [
+                "source_evidence.id",
+                "source_evidence.tenant_id",
+                "source_evidence.file_version_id",
+            ],
+            name="fk_fact_version_evidence_tenant_version",
+        ),
         Index("uq_fact_version_current", "fact_id", unique=True, sqlite_where=text("is_current = 1"), postgresql_where=text("is_current")),
     )
     id: Mapped[str] = mapped_column(String(128), primary_key=True, default=new_id)
@@ -169,6 +188,85 @@ class FactVersion(Base):
     value_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     source_evidence_id: Mapped[str | None] = mapped_column(String(128))
+    source_evidence_version_id: Mapped[str | None] = mapped_column(String(26))
     is_current: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     rationale: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+_PROCESSING_ATTEMPT_TRANSITIONS: dict[str, frozenset[str]] = {
+    "pending": frozenset({"processing", "failed"}),
+    "processing": frozenset({"succeeded", "failed"}),
+}
+_PROCESSING_ATTEMPT_MUTATION_KEY = "processing_attempt_transition_ids"
+
+
+def complete_processing_attempt(
+    session: Session,
+    attempt: ProcessingAttempt,
+    *,
+    status: str,
+    error_code: str | None,
+    findings_json: list[dict[str, Any]],
+) -> None:
+    """Perform the sole supported active-to-terminal history transition."""
+    if status not in _PROCESSING_ATTEMPT_TRANSITIONS.get(attempt.status, frozenset()):
+        raise ImmutableProcessingAttemptError(
+            f"processing attempt cannot transition from {attempt.status} to {status}"
+        )
+    allowed = session.info.setdefault(_PROCESSING_ATTEMPT_MUTATION_KEY, set())
+    allowed.add(attempt.id)
+    try:
+        attempt.status = status
+        attempt.error_code = error_code
+        attempt.findings_json = findings_json
+        attempt.completed_at = now()
+        session.flush()
+    finally:
+        allowed.discard(attempt.id)
+
+
+@event.listens_for(Session, "before_flush")
+def _protect_processing_attempt_history(session: Session, *_: object) -> None:
+    allowed = session.info.get(_PROCESSING_ATTEMPT_MUTATION_KEY, set())
+    for instance in session.deleted:
+        if isinstance(instance, ProcessingAttempt) and inspect(instance).persistent:
+            raise ImmutableProcessingAttemptError(
+                "processing attempts cannot be deleted"
+            )
+    for instance in session.dirty:
+        if not isinstance(instance, ProcessingAttempt) or not inspect(instance).persistent:
+            continue
+        state = inspect(instance)
+        previous = state.attrs.status.history.deleted
+        previous_status = previous[0] if previous else instance.status
+        if previous_status in {"succeeded", "failed"} or instance.id not in allowed:
+            raise ImmutableProcessingAttemptError(
+                "processing attempts are immutable outside controlled transitions"
+            )
+        if instance.status not in _PROCESSING_ATTEMPT_TRANSITIONS.get(
+            previous_status, frozenset()
+        ):
+            raise ImmutableProcessingAttemptError(
+                f"processing attempt cannot transition from {previous_status} to {instance.status}"
+            )
+        changed = {
+            attribute.key
+            for attribute in state.attrs
+            if attribute.history.has_changes()
+        }
+        if changed - {"status", "error_code", "findings_json", "completed_at"}:
+            raise ImmutableProcessingAttemptError(
+                "processing attempt identity and provenance are immutable"
+            )
+
+
+@event.listens_for(Session, "do_orm_execute")
+def _prevent_bulk_processing_attempt_mutation(state: ORMExecuteState) -> None:
+    statement = state.statement
+    if isinstance(statement, (Update, Delete)) and getattr(
+        statement.table, "name", None
+    ) == ProcessingAttempt.__tablename__:
+        raise ImmutableProcessingAttemptError(
+            "bulk processing attempt mutation is not allowed"
+        )

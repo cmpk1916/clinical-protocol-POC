@@ -91,6 +91,12 @@ class SourceEvidence(Base):
     __tablename__ = "source_evidence"
     __table_args__ = (
         UniqueConstraint("file_version_id", "ordinal", name="uq_source_evidence_version_ordinal"),
+        UniqueConstraint(
+            "id",
+            "tenant_id",
+            "file_version_id",
+            name="uq_source_evidence_id_tenant_version",
+        ),
         ForeignKeyConstraint(["file_version_id", "tenant_id"], ["file_versions.id", "file_versions.tenant_id"], name="fk_evidence_version_tenant"),
         Index("ix_source_evidence_tenant_version", "tenant_id", "file_version_id"),
         CheckConstraint("ordinal >= 0", name="ck_source_evidence_ordinal"),

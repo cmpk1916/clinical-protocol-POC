@@ -87,7 +87,7 @@ class FactReviewService:
         fact.current_version += 1
         fact.status = "approved"
         fact.deferred = False
-        self.session.add(FactVersion(tenant_id=ctx.tenant_id, fact_id=fact.id, version=fact.current_version, value_json=value_json, confidence=current.confidence, source_evidence_id=current.source_evidence_id, is_current=True, rationale=rationale))
+        self.session.add(FactVersion(tenant_id=ctx.tenant_id, fact_id=fact.id, version=fact.current_version, value_json=value_json, confidence=current.confidence, source_evidence_id=current.source_evidence_id, source_evidence_version_id=current.source_evidence_version_id, is_current=True, rationale=rationale))
         self.audit.append(ctx, "fact.corrected_and_approved", "fact", fact.id, {"version": fact.current_version, "rationale": rationale, "explicitly_confirmed": explicitly_confirmed})
         ImpactService(self.session).invalidate_for_fact(ctx, fact.id)
         return fact
@@ -157,7 +157,18 @@ class FactReviewService:
         by_fact = {version.fact_id: (version, evidence, attempt) for version, evidence, attempt in self.session.execute(statement)}
         items: list[FactReviewItem] = []
         for fact in facts:
-            version, evidence, attempt = by_fact[fact.id]
+            row = by_fact.get(fact.id)
+            if row is None:
+                continue
+            version, evidence, attempt = row
+            if attempt is not None and (
+                evidence is None
+                or evidence.file_version_id != attempt.synopsis_version_id
+                or version.source_evidence_version_id != attempt.synopsis_version_id
+            ):
+                # Processing-backed review data is only safe to display when its
+                # evidence can be proven to come from the exact attempt version.
+                continue
             embedded_confidence = version.value_json.get("confidence")
             confidence = version.confidence
             if confidence is None and isinstance(embedded_confidence, (int, float)):

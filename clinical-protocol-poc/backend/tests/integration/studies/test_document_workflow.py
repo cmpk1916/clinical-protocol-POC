@@ -4,7 +4,7 @@ from xml.sax.saxutils import escape
 from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
-from sqlalchemy import create_engine, event, select
+from sqlalchemy import create_engine, delete, event, select, update
 from sqlalchemy.orm import Session
 
 from protocol_poc.db import Base
@@ -16,7 +16,13 @@ from protocol_poc.studies.document_workflow import (
     ProcessingConflict,
     ProcessingNotFound,
 )
-from protocol_poc.studies.models import Fact, FactVersion, ProcessingAttempt
+from protocol_poc.studies.local_extractor import ExtractionProposal, LocalCandidate
+from protocol_poc.studies.models import (
+    Fact,
+    FactVersion,
+    ImmutableProcessingAttemptError,
+    ProcessingAttempt,
+)
 from protocol_poc.studies.service import StudyArchived, StudyNotFound, StudyService
 from protocol_poc.tenancy import TenantContext
 
@@ -332,3 +338,168 @@ def test_retry_rejects_attempt_when_synopsis_is_no_longer_current(
 
     with pytest.raises(ProcessingNotFound):
         service.retry(ctx, study.id, failed.attempt_id)
+
+
+def test_claim_is_persisted_before_evidence_loading(
+    session: Session, tmp_path: Path
+) -> None:
+    ctx = TenantContext("tenant", "actor")
+    study = StudyService(session).create(ctx, "Synthetic Study")
+    service = workflow(session, tmp_path)
+    uploaded = service.upload(ctx, study.id, upload(supported_synopsis()))
+    original = service._ingest.evidence_for_version
+
+    def evidence_after_claim(context: TenantContext, version_id: str):
+        attempt = session.scalar(
+            select(ProcessingAttempt).where(
+                ProcessingAttempt.synopsis_version_id == version_id,
+                ProcessingAttempt.status == "processing",
+            )
+        )
+        assert attempt is not None
+        return original(context, version_id)
+
+    service._ingest.evidence_for_version = evidence_after_claim  # type: ignore[method-assign]
+
+    assert service.process(ctx, study.id, uploaded.version_id).status == "succeeded"
+
+
+@pytest.mark.parametrize(
+    ("failure_stage", "error_code", "finding_code"),
+    [
+        ("evidence", "evidence_load_failed", "PROCESSING_EVIDENCE_LOAD_FAILED"),
+        ("extractor", "extractor_failed", "PROCESSING_EXTRACTOR_FAILED"),
+    ],
+)
+def test_unexpected_processing_failure_persists_retryable_attempt_without_facts(
+    session: Session,
+    tmp_path: Path,
+    failure_stage: str,
+    error_code: str,
+    finding_code: str,
+) -> None:
+    ctx = TenantContext("tenant", "actor")
+    study = StudyService(session).create(ctx, "Synthetic Study")
+    service = workflow(session, tmp_path)
+    uploaded = service.upload(ctx, study.id, upload(supported_synopsis()))
+
+    if failure_stage == "evidence":
+        def fail_evidence(_context: TenantContext, _version_id: str):
+            raise RuntimeError("sensitive evidence failure")
+
+        service._ingest.evidence_for_version = fail_evidence  # type: ignore[method-assign]
+    else:
+        def fail_extract(_evidence: object):
+            raise RuntimeError("sensitive extractor failure")
+
+        service._extractor.extract = fail_extract  # type: ignore[method-assign]
+
+    outcome = service.process(ctx, study.id, uploaded.version_id)
+
+    attempt = session.get(ProcessingAttempt, outcome.attempt_id)
+    assert outcome.status == "failed"
+    assert [(item.code, item.field) for item in outcome.findings] == [
+        (finding_code, "synopsis")
+    ]
+    assert attempt is not None and attempt.error_code == error_code
+    assert "sensitive" not in str(attempt.findings_json)
+    assert session.scalars(select(Fact)).all() == []
+
+
+def test_current_synopsis_is_revalidated_after_extraction_before_persistence(
+    session: Session, tmp_path: Path
+) -> None:
+    ctx = TenantContext("tenant", "actor")
+    study = StudyService(session).create(ctx, "Synthetic Study")
+    service = workflow(session, tmp_path)
+    first = service.upload(ctx, study.id, upload(supported_synopsis()))
+    second = service.upload(ctx, study.id, upload(supported_synopsis("SYN-2")))
+    original_extract = service._extractor.extract
+
+    def change_current(evidence: object):
+        proposal = original_extract(evidence)  # type: ignore[arg-type]
+        current = session.scalar(select(StudyInput).where(StudyInput.role == "synopsis"))
+        assert current is not None
+        current.current_file_version_id = second.version_id
+        session.commit()
+        return proposal
+
+    service._extractor.extract = change_current  # type: ignore[method-assign]
+
+    outcome = service.process(ctx, study.id, first.version_id)
+
+    assert outcome.status == "failed"
+    assert [item.code for item in outcome.findings] == [
+        "PROCESSING_SYNOPSIS_NO_LONGER_CURRENT"
+    ]
+    assert session.scalars(select(Fact)).all() == []
+
+
+def test_candidate_evidence_must_belong_to_exact_attempt_synopsis(
+    session: Session, tmp_path: Path
+) -> None:
+    ctx = TenantContext("tenant", "actor")
+    study = StudyService(session).create(ctx, "Synthetic Study")
+    service = workflow(session, tmp_path)
+    first = service.upload(ctx, study.id, upload(supported_synopsis()))
+    second = service.upload(ctx, study.id, upload(supported_synopsis("SYN-2")))
+    foreign_evidence = session.scalar(
+        select(SourceEvidence).where(SourceEvidence.file_version_id == second.version_id)
+    )
+    assert foreign_evidence is not None
+
+    service._extractor.extract = lambda _evidence: ExtractionProposal(  # type: ignore[method-assign]
+        (
+            LocalCandidate(
+                "study_identity",
+                {"kind": "string", "value": "corrupt"},
+                foreign_evidence.id,
+            ),
+        ),
+        (),
+    )
+
+    outcome = service.process(ctx, study.id, first.version_id)
+
+    assert outcome.status == "failed"
+    assert [item.code for item in outcome.findings] == [
+        "PROCESSING_EVIDENCE_PROVENANCE_INVALID"
+    ]
+    assert session.scalars(select(Fact)).all() == []
+
+
+def test_terminal_processing_attempt_rejects_orm_and_bulk_mutation(
+    session: Session, tmp_path: Path
+) -> None:
+    ctx = TenantContext("tenant", "actor")
+    study = StudyService(session).create(ctx, "Synthetic Study")
+    service = workflow(session, tmp_path)
+    uploaded = service.upload(ctx, study.id, upload(supported_synopsis()))
+    outcome = service.process(ctx, study.id, uploaded.version_id)
+    attempt = session.get(ProcessingAttempt, outcome.attempt_id)
+    assert attempt is not None
+
+    attempt.error_code = "tampered"
+    with pytest.raises(ImmutableProcessingAttemptError):
+        session.flush()
+    session.rollback()
+
+    attempt = session.get(ProcessingAttempt, outcome.attempt_id)
+    assert attempt is not None
+    session.delete(attempt)
+    with pytest.raises(ImmutableProcessingAttemptError):
+        session.flush()
+    session.rollback()
+
+    with pytest.raises(ImmutableProcessingAttemptError):
+        session.execute(
+            update(ProcessingAttempt)
+            .where(ProcessingAttempt.id == outcome.attempt_id)
+            .values(error_code="tampered")
+        )
+    with pytest.raises(ImmutableProcessingAttemptError):
+        session.execute(
+            delete(ProcessingAttempt).where(
+                ProcessingAttempt.id == outcome.attempt_id
+            )
+        )

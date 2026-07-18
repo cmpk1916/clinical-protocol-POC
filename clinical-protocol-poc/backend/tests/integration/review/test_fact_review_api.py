@@ -78,7 +78,8 @@ def test_review_queue_includes_value_confidence_and_exact_evidence(tmp_path, mon
         session.add(FactVersion(
             tenant_id="tenant-a", fact_id=fact.id, version=1,
             value_json={"kind": "dose", "value": "10", "unit": "mg", "frequency": "once daily"},
-            confidence=1.0, source_evidence_id=evidence.id, is_current=True,
+            confidence=1.0, source_evidence_id=evidence.id,
+            source_evidence_version_id=version.id, is_current=True,
         ))
         session.commit()
 
@@ -99,4 +100,116 @@ def test_review_queue_includes_value_confidence_and_exact_evidence(tmp_path, mon
         "critical": True, "version": 1, "extractor_version": "local-rules-v1",
         "synopsis_version_id": "version-a", "downstream_impact": ["study_design"],
     }]
+    get_settings.cache_clear()
+
+
+def test_review_queue_excludes_cross_version_evidence_but_remains_viewable_when_archived(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", f"sqlite+pysqlite:///{tmp_path / 'provenance-review.db'}")
+    monkeypatch.setenv("ALLOW_INSECURE_IDENTITY_HEADERS", "true")
+    monkeypatch.setenv("ENVIRONMENT", "test")
+    get_settings.cache_clear()
+    app = create_app()
+    Base.metadata.create_all(app.state.engine)
+    with app.state.session_factory() as session:
+        session.add(
+            Study(
+                id="study-a",
+                tenant_id="tenant-a",
+                name="Archived study",
+                lifecycle="archived",
+            )
+        )
+        record = FileRecord(
+            id="file-a", tenant_id="tenant-a", study_id="study-a", role="synopsis"
+        )
+        versions = [
+            FileVersion(
+                id=f"version-{suffix}",
+                tenant_id="tenant-a",
+                file_record_id=record.id,
+                version=index,
+                display_filename="synopsis.docx",
+                checksum_sha256=checksum * 64,
+                size_bytes=10,
+                content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                storage_key=f"tenant/version-{suffix}.docx",
+                status="succeeded",
+            )
+            for index, suffix, checksum in ((1, "a", "a"), (2, "b", "b"))
+        ]
+        evidence = [
+            SourceEvidence(
+                id="evidence-a", tenant_id="tenant-a", file_version_id="version-a",
+                ordinal=0, location_json={"kind": "paragraph", "index": 0},
+                text="archived but viewable evidence", text_sha256="c" * 64,
+            ),
+            SourceEvidence(
+                id="evidence-b", tenant_id="tenant-a", file_version_id="version-b",
+                ordinal=0, location_json={"kind": "paragraph", "index": 0},
+                text="evidence from wrong version", text_sha256="d" * 64,
+            ),
+        ]
+        attempt = ProcessingAttempt(
+            id="attempt-a",
+            tenant_id="tenant-a",
+            study_id="study-a",
+            synopsis_version_id="version-a",
+            extractor_name="local-rules",
+            extractor_version="local-rules-v1",
+            status="succeeded",
+            findings_json=[],
+        )
+        facts = [
+            Fact(
+                id="valid-viewable",
+                tenant_id="tenant-a",
+                study_id="study-a",
+                processing_attempt_id="attempt-a",
+                kind="population",
+                status="candidate",
+            ),
+            Fact(
+                id="corrupt-hidden",
+                tenant_id="tenant-a",
+                study_id="study-a",
+                processing_attempt_id="attempt-a",
+                kind="population",
+                status="candidate",
+            ),
+        ]
+        session.add_all([record, *versions, *evidence, attempt, *facts])
+        session.flush()
+        session.add_all(
+            [
+                FactVersion(
+                    tenant_id="tenant-a",
+                    fact_id="valid-viewable",
+                    version=1,
+                    value_json={"kind": "string", "value": "legacy"},
+                    source_evidence_id="evidence-a",
+                    source_evidence_version_id="version-a",
+                    is_current=True,
+                ),
+                FactVersion(
+                    tenant_id="tenant-a",
+                    fact_id="corrupt-hidden",
+                    version=1,
+                    value_json={"kind": "string", "value": "corrupt"},
+                    source_evidence_id="evidence-b",
+                    source_evidence_version_id="version-b",
+                    is_current=True,
+                ),
+            ]
+        )
+        session.commit()
+
+    response = TestClient(app).get(
+        "/api/studies/study-a/fact-review",
+        headers={"X-Tenant-ID": "tenant-a", "X-Actor-ID": "writer-a"},
+    )
+
+    assert response.status_code == 200
+    assert [item["id"] for item in response.json()["items"]] == ["valid-viewable"]
     get_settings.cache_clear()

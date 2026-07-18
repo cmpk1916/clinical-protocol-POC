@@ -71,3 +71,23 @@ def test_synopsis_recognizes_supported_headings_and_fields_case_insensitively() 
     )
 
     assert DocumentContract().validate_synopsis(supported) == ()
+
+
+def test_synopsis_reports_unsupported_and_missing_heading_stably() -> None:
+    supported = evidence(
+        "Study Identity", "Short title: SYN-1",
+        "Goals", "Objective: Evaluate response",
+        "Endpoints", "Endpoint: Response at Week 8",
+        "Arms and Interventions",
+        "Arm: Experimental; Intervention: Example drug 10 mg once daily",
+        "Study Population", "Population: Adults with synthetic condition",
+        "Eligibility Criteria", "Eligibility: Age 18 years or older",
+    )
+
+    assert [
+        (finding.code, finding.field)
+        for finding in DocumentContract().validate_synopsis(supported)
+    ] == [
+        ("SYNOPSIS_HEADING_UNSUPPORTED", "synopsis"),
+        ("SYNOPSIS_HEADING_MISSING", "objectives"),
+    ]
