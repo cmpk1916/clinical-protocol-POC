@@ -75,7 +75,7 @@ class FactReviewService:
 
     def _evidence_is_exact(self, ctx: TenantContext, fact: Fact) -> bool:
         if fact.processing_attempt_id is None:
-            return True
+            return fact.status == "approved"
         row = self.session.execute(
             select(FactVersion, SourceEvidence, ProcessingAttempt)
             .outerjoin(
@@ -217,12 +217,27 @@ class FactReviewService:
         for fact in facts:
             row = by_fact.get(fact.id)
             if row is None:
+                items.append(
+                    FactReviewItem(
+                        fact=fact,
+                        value={},
+                        confidence=None,
+                        evidence_id=None,
+                        evidence_location=None,
+                        evidence_text=None,
+                        extractor_version=None,
+                        synopsis_version_id=None,
+                        downstream_impact=self._downstream_impact(fact.kind),
+                        evidence_valid=False,
+                    )
+                )
                 continue
             version, evidence, attempt = row
-            evidence_valid = attempt is None or not (
-                evidence is None
-                or evidence.file_version_id != attempt.synopsis_version_id
-                or version.source_evidence_version_id != attempt.synopsis_version_id
+            evidence_valid = bool(
+                attempt is not None
+                and evidence is not None
+                and evidence.file_version_id == attempt.synopsis_version_id
+                and version.source_evidence_version_id == attempt.synopsis_version_id
             )
             embedded_confidence = version.value_json.get("confidence")
             confidence = version.confidence

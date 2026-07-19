@@ -148,4 +148,31 @@ describe("ReviewQueue", () => {
       assert.equal(screen.getByRole("button", { name }).hasAttribute("disabled"), true);
     }
   });
+
+  it("keeps a candidate with no current version visible as a blocked review item", async () => {
+    const api: ReviewApi = {
+      ...criticalFactApi,
+      async getReviewQueue() {
+        const payload = await criticalFactApi.getReviewQueue("study-1");
+        return {
+          ...payload,
+          items: [{
+            ...payload.items[0]!,
+            candidateValue: "Unavailable",
+            evidenceValid: false,
+            evidenceLocation: "",
+            evidenceText: "",
+          }],
+        };
+      },
+    };
+    render(<ReviewQueue studyId="study-1" api={api} />);
+
+    assert.ok(await screen.findByText("Investigational product dose"));
+    assert.ok(screen.getByRole("alert", { name: "Exact evidence verification failed" }));
+    assert.equal(screen.queryByText("All candidate facts have been reviewed."), null);
+    for (const name of ["Approve fact", "Reject fact", "Defer fact"]) {
+      assert.equal(screen.getByRole("button", { name }).hasAttribute("disabled"), true);
+    }
+  });
 });

@@ -1,3 +1,4 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from protocol_poc.app import create_app
@@ -283,6 +284,114 @@ def test_review_queue_fails_closed_for_mismatched_exact_evidence(tmp_path, monke
     get_settings.cache_clear()
 
 
+@pytest.mark.parametrize(
+    ("action", "status", "extra"),
+    [
+        ("approve", "candidate", {"explicitly_confirmed": True}),
+        (
+            "correct_and_approve",
+            "candidate",
+            {"value": {"kind": "string", "value": "corrected"}, "rationale": "Correction"},
+        ),
+        ("reject", "candidate", {"rationale": "Reject"}),
+        ("defer", "candidate", {"rationale": "Defer"}),
+        ("resume", "candidate", {"rationale": "Resume"}),
+        ("resolve_conflict", "conflicted", {"rationale": "Resolve"}),
+    ],
+)
+def test_review_mutations_fail_closed_without_a_processing_attempt_and_evidence(
+    tmp_path, monkeypatch, action: str, status: str, extra: dict[str, object]
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", f"sqlite+pysqlite:///{tmp_path / f'{action}.db'}")
+    monkeypatch.setenv("ALLOW_INSECURE_IDENTITY_HEADERS", "true")
+    monkeypatch.setenv("ENVIRONMENT", "test")
+    get_settings.cache_clear()
+    app = create_app()
+    Base.metadata.create_all(app.state.engine)
+    with app.state.session_factory() as session:
+        session.add(Study(id="study-a", tenant_id="tenant-a", name="Synthetic study"))
+        fact = Fact(
+            id="fact-a",
+            tenant_id="tenant-a",
+            study_id="study-a",
+            processing_attempt_id=None,
+            kind="population",
+            status=status,
+        )
+        session.add(fact)
+        session.flush()
+        session.add(
+            FactVersion(
+                tenant_id="tenant-a",
+                fact_id=fact.id,
+                version=1,
+                value_json={"kind": "string", "value": "Synthetic adults"},
+                is_current=True,
+            )
+        )
+        if status == "conflicted":
+            session.add(
+                FactConflict(
+                    tenant_id="tenant-a",
+                    fact_id=fact.id,
+                    conflicting_fact_id=fact.id,
+                    status="open",
+                )
+            )
+        session.commit()
+
+    response = TestClient(app).post(
+        "/api/facts/fact-a/review",
+        headers={"X-Tenant-ID": "tenant-a", "X-Actor-ID": "writer-a"},
+        json={"action": action, "expected_version": 1, **extra},
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": {"code": "EXACT_EVIDENCE_UNAVAILABLE"}}
+    get_settings.cache_clear()
+
+
+def test_review_queue_keeps_candidate_without_current_version_visible_and_blocked(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", f"sqlite+pysqlite:///{tmp_path / 'missing-version.db'}")
+    monkeypatch.setenv("ALLOW_INSECURE_IDENTITY_HEADERS", "true")
+    monkeypatch.setenv("ENVIRONMENT", "test")
+    get_settings.cache_clear()
+    app = create_app()
+    Base.metadata.create_all(app.state.engine)
+    with app.state.session_factory() as session:
+        session.add_all(
+            [
+                Study(id="study-a", tenant_id="tenant-a", name="Synthetic study"),
+                Fact(
+                    id="fact-a",
+                    tenant_id="tenant-a",
+                    study_id="study-a",
+                    kind="population",
+                    status="candidate",
+                ),
+            ]
+        )
+        session.commit()
+
+    client = TestClient(app)
+    headers = {"X-Tenant-ID": "tenant-a", "X-Actor-ID": "writer-a"}
+    workspace = client.get("/api/studies/study-a/workspace", headers=headers)
+    response = client.get("/api/studies/study-a/fact-review", headers=headers)
+
+    assert workspace.status_code == 200
+    assert workspace.json()["counts"]["candidate_facts"] == 1
+    assert response.status_code == 200
+    assert len(response.json()["items"]) == 1
+    item = response.json()["items"][0]
+    assert item["id"] == "fact-a"
+    assert item["current_value"] == {}
+    assert item["evidence_valid"] is False
+    assert item["source_evidence"] is None
+    get_settings.cache_clear()
+
+
 def test_conflict_resolution_requires_rationale_and_returns_candidate(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("DATABASE_URL", f"sqlite+pysqlite:///{tmp_path / 'conflict-review.db'}")
     monkeypatch.setenv("ALLOW_INSECURE_IDENTITY_HEADERS", "true")
@@ -292,14 +401,43 @@ def test_conflict_resolution_requires_rationale_and_returns_candidate(tmp_path, 
     Base.metadata.create_all(app.state.engine)
     with app.state.session_factory() as session:
         session.add(Study(id="study-a", tenant_id="tenant-a", name="Synthetic study"))
+        record = FileRecord(
+            id="file-a", tenant_id="tenant-a", study_id="study-a", role="synopsis"
+        )
+        version = FileVersion(
+            id="version-a", tenant_id="tenant-a", file_record_id=record.id, version=1,
+            display_filename="synopsis.docx", checksum_sha256="a" * 64, size_bytes=10,
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            storage_key="tenant/version-a.docx", status="succeeded",
+        )
+        evidence = SourceEvidence(
+            id="evidence-a", tenant_id="tenant-a", file_version_id=version.id, ordinal=0,
+            location_json={"kind": "paragraph", "index": 0}, text="Dose 10 mg",
+            text_sha256="b" * 64,
+        )
+        attempt = ProcessingAttempt(
+            id="attempt-a", tenant_id="tenant-a", study_id="study-a",
+            synopsis_version_id=version.id, extractor_name="local-rules",
+            extractor_version="local-rules-v1", status="succeeded", findings_json=[],
+        )
         facts = [
-            Fact(id="fact-a", tenant_id="tenant-a", study_id="study-a", kind="dose", status="conflicted"),
-            Fact(id="fact-b", tenant_id="tenant-a", study_id="study-a", kind="dose", status="candidate"),
+            Fact(
+                id="fact-a", tenant_id="tenant-a", study_id="study-a",
+                processing_attempt_id=attempt.id, kind="dose", status="conflicted",
+            ),
+            Fact(
+                id="fact-b", tenant_id="tenant-a", study_id="study-a",
+                processing_attempt_id=attempt.id, kind="dose", status="candidate",
+            ),
         ]
-        session.add_all(facts)
+        session.add_all([record, version, evidence, attempt, *facts])
         session.flush()
         session.add_all([
-            FactVersion(tenant_id="tenant-a", fact_id=item.id, version=1, value_json={"value": "10 mg"}, is_current=True)
+            FactVersion(
+                tenant_id="tenant-a", fact_id=item.id, version=1,
+                value_json={"value": "10 mg"}, source_evidence_id=evidence.id,
+                source_evidence_version_id=version.id, is_current=True,
+            )
             for item in facts
         ])
         session.add(FactConflict(

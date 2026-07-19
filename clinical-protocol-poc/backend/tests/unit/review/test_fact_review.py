@@ -4,9 +4,10 @@ from sqlalchemy.orm import Session
 
 from protocol_poc.audit.models import AuditEvent
 from protocol_poc.db import Base
+from protocol_poc.files.models import FileRecord, FileVersion, SourceEvidence
 from protocol_poc.review.fact_service import ExplicitConfirmationRequired, FactReviewService, UnresolvedConflict
 from protocol_poc.studies.service import StudyArchived
-from protocol_poc.studies.models import Fact, FactVersion, Study
+from protocol_poc.studies.models import Fact, FactVersion, ProcessingAttempt, Study
 from protocol_poc.tenancy import TenantContext
 
 
@@ -22,8 +23,42 @@ def session() -> Session:
 
 
 def add_fact(session: Session, *, fact_id: str, status: str = "candidate", critical: bool = False) -> Fact:
-    fact = Fact(id=fact_id, tenant_id="tenant-a", study_id="study-a", kind="dose", status=status, critical=critical)
-    session.add_all([fact, FactVersion(tenant_id="tenant-a", fact_id=fact_id, version=1, value_json={"value": "10 mg"}, is_current=True)])
+    if session.get(ProcessingAttempt, "review-attempt") is None:
+        record = FileRecord(
+            id="review-file", tenant_id="tenant-a", study_id="study-a", role="synopsis"
+        )
+        version = FileVersion(
+            id="review-version", tenant_id="tenant-a", file_record_id=record.id,
+            version=1, display_filename="synopsis.docx", checksum_sha256="a" * 64,
+            size_bytes=10,
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            storage_key="tenant/review-version.docx", status="succeeded",
+        )
+        evidence = SourceEvidence(
+            id="review-evidence", tenant_id="tenant-a", file_version_id=version.id,
+            ordinal=0, location_json={"kind": "paragraph", "index": 0},
+            text="Example drug 10 mg", text_sha256="b" * 64,
+        )
+        attempt = ProcessingAttempt(
+            id="review-attempt", tenant_id="tenant-a", study_id="study-a",
+            synopsis_version_id=version.id, extractor_name="local-rules",
+            extractor_version="local-rules-v1", status="succeeded", findings_json=[],
+        )
+        session.add_all([record, version, evidence, attempt])
+        session.flush()
+    fact = Fact(
+        id=fact_id, tenant_id="tenant-a", study_id="study-a",
+        processing_attempt_id="review-attempt", kind="dose", status=status,
+        critical=critical,
+    )
+    session.add_all([
+        fact,
+        FactVersion(
+            tenant_id="tenant-a", fact_id=fact_id, version=1,
+            value_json={"value": "10 mg"}, source_evidence_id="review-evidence",
+            source_evidence_version_id="review-version", is_current=True,
+        ),
+    ])
     session.commit()
     return fact
 
