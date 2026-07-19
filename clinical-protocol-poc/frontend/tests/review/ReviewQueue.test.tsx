@@ -76,4 +76,76 @@ describe("ReviewQueue", () => {
     assert.ok(screen.getByText("Intervention: Example drug 10 mg once daily"));
     assert.equal(screen.getByRole("button", { name: "Approve fact" }).hasAttribute("disabled"), true);
   });
+
+  it("shows deferred facts and resumes them through an authoritative refresh", async () => {
+    const calls: Array<{ action: string; rationale: string }> = [];
+    const api: ReviewApi = {
+      ...criticalFactApi,
+      async getReviewQueue() {
+        const payload = await criticalFactApi.getReviewQueue("study-1");
+        return { ...payload, items: [{ ...payload.items[0]!, status: "deferred" }] };
+      },
+      async reviewFact(input) {
+        calls.push({ action: input.action, rationale: input.rationale });
+        return { blockers: [], items: [] };
+      },
+    };
+    const user = userEvent.setup();
+    render(<ReviewQueue studyId="study-1" api={api} />);
+
+    await user.click(await screen.findByRole("button", { name: "Resume review" }));
+
+    assert.deepEqual(calls, [{ action: "resume", rationale: "Resumed during guided review." }]);
+    assert.ok(await screen.findByText("All candidate facts have been reviewed."));
+  });
+
+  it("requires a rationale to resolve conflicts and refreshes from the server", async () => {
+    const calls: Array<{ action: string; rationale: string }> = [];
+    const api: ReviewApi = {
+      ...criticalFactApi,
+      async getReviewQueue() {
+        const payload = await criticalFactApi.getReviewQueue("study-1");
+        return { ...payload, items: [{ ...payload.items[0]!, status: "conflict" }] };
+      },
+      async reviewFact(input) {
+        calls.push({ action: input.action, rationale: input.rationale });
+        return { blockers: [], items: [] };
+      },
+    };
+    const user = userEvent.setup();
+    render(<ReviewQueue studyId="study-1" api={api} />);
+
+    const resolve = await screen.findByRole("button", { name: "Resolve conflict" });
+    assert.equal(resolve.hasAttribute("disabled"), true);
+    await user.type(screen.getByLabelText("Conflict resolution rationale"), "Use exact synopsis evidence");
+    await user.click(resolve);
+
+    assert.deepEqual(calls, [{ action: "resolve_conflict", rationale: "Use exact synopsis evidence" }]);
+    assert.ok(await screen.findByText("All candidate facts have been reviewed."));
+  });
+
+  it("fails closed and disables mutations when exact evidence cannot be verified", async () => {
+    const api: ReviewApi = {
+      ...criticalFactApi,
+      async getReviewQueue() {
+        const payload = await criticalFactApi.getReviewQueue("study-1");
+        return {
+          ...payload,
+          items: [{
+            ...payload.items[0]!,
+            evidenceValid: false,
+            evidenceLocation: "",
+            evidenceText: "",
+          }],
+        };
+      },
+    };
+    render(<ReviewQueue studyId="study-1" api={api} />);
+
+    assert.ok(await screen.findByRole("alert", { name: "Exact evidence verification failed" }));
+    assert.equal(screen.queryByText(/unavailable/i), null);
+    for (const name of ["Approve fact", "Reject fact", "Defer fact"]) {
+      assert.equal(screen.getByRole("button", { name }).hasAttribute("disabled"), true);
+    }
+  });
 });

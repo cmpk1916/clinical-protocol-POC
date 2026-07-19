@@ -33,6 +33,10 @@ class VersionConflict(FactReviewError):
     pass
 
 
+class EvidenceUnavailable(FactReviewError):
+    pass
+
+
 @dataclass(frozen=True, slots=True)
 class FactReviewItem:
     fact: Fact
@@ -44,6 +48,7 @@ class FactReviewItem:
     extractor_version: str | None
     synopsis_version_id: str | None
     downstream_impact: tuple[str, ...]
+    evidence_valid: bool
 
 
 class FactReviewService:
@@ -51,15 +56,52 @@ class FactReviewService:
         self.session = session
         self.audit = AuditService(session)
 
-    def _fact(self, ctx: TenantContext, fact_id: str, expected_version: int) -> Fact:
+    def require_active_fact(self, ctx: TenantContext, fact_id: str) -> Fact:
         context = require_tenant_context(ctx)
         fact = self.session.scalar(select(Fact).where(Fact.id == fact_id, Fact.tenant_id == context.tenant_id))
         if fact is None:
             raise FactNotFound(fact_id)
-        if fact.current_version != expected_version:
-            raise VersionConflict(f"expected version {expected_version}, found {fact.current_version}")
         StudyService(self.session).require_active(context, fact.study_id)
         return fact
+
+    def _fact(self, ctx: TenantContext, fact_id: str, expected_version: int) -> Fact:
+        context = require_tenant_context(ctx)
+        fact = self.require_active_fact(context, fact_id)
+        if fact.current_version != expected_version:
+            raise VersionConflict(f"expected version {expected_version}, found {fact.current_version}")
+        if not self._evidence_is_exact(context, fact):
+            raise EvidenceUnavailable("exact source evidence could not be verified")
+        return fact
+
+    def _evidence_is_exact(self, ctx: TenantContext, fact: Fact) -> bool:
+        if fact.processing_attempt_id is None:
+            return True
+        row = self.session.execute(
+            select(FactVersion, SourceEvidence, ProcessingAttempt)
+            .outerjoin(
+                SourceEvidence,
+                (SourceEvidence.id == FactVersion.source_evidence_id)
+                & (SourceEvidence.tenant_id == FactVersion.tenant_id),
+            )
+            .join(
+                ProcessingAttempt,
+                (ProcessingAttempt.id == fact.processing_attempt_id)
+                & (ProcessingAttempt.tenant_id == FactVersion.tenant_id),
+            )
+            .where(
+                FactVersion.fact_id == fact.id,
+                FactVersion.tenant_id == ctx.tenant_id,
+                FactVersion.is_current.is_(True),
+            )
+        ).one_or_none()
+        if row is None:
+            return False
+        version, evidence, attempt = row
+        return bool(
+            evidence is not None
+            and evidence.file_version_id == attempt.synopsis_version_id
+            and version.source_evidence_version_id == attempt.synopsis_version_id
+        )
 
     @staticmethod
     def _require_confirmation(fact: Fact, explicitly_confirmed: bool) -> None:
@@ -107,8 +149,22 @@ class FactReviewService:
         self.audit.append(ctx, "fact.deferred", "fact", fact.id, {"version": fact.current_version, "rationale": rationale})
         return fact
 
+    def resume(self, ctx: TenantContext, fact_id: str, *, expected_version: int, rationale: str) -> Fact:
+        fact = self._fact(ctx, fact_id, expected_version)
+        fact.deferred = False
+        self.audit.append(
+            ctx,
+            "fact.review_resumed",
+            "fact",
+            fact.id,
+            {"version": fact.current_version, "rationale": rationale},
+        )
+        return fact
+
     def resolve_conflict(self, ctx: TenantContext, fact_id: str, *, expected_version: int, resolution: str) -> Fact:
         fact = self._fact(ctx, fact_id, expected_version)
+        if not resolution.strip():
+            raise FactReviewError("conflict resolution rationale is required")
         conflicts = list(self.session.scalars(select(FactConflict).where(FactConflict.fact_id == fact.id, FactConflict.tenant_id == ctx.tenant_id, FactConflict.status == "open")))
         if not conflicts and fact.status != "conflicted":
             raise UnresolvedConflict("fact has no open conflict")
@@ -123,13 +179,13 @@ class FactReviewService:
         priority = case(
             (Fact.status == "conflicted", 0),
             (Fact.critical.is_(True), 1),
+            (Fact.deferred.is_(True), 3),
             else_=2,
         )
         statement = select(Fact).where(
             Fact.tenant_id == context.tenant_id,
             Fact.study_id == study_id,
             Fact.status.in_(("candidate", "conflicted")),
-            Fact.deferred.is_(False),
         ).order_by(priority, Fact.id)
         return list(self.session.scalars(statement))
 
@@ -163,14 +219,11 @@ class FactReviewService:
             if row is None:
                 continue
             version, evidence, attempt = row
-            if attempt is not None and (
+            evidence_valid = attempt is None or not (
                 evidence is None
                 or evidence.file_version_id != attempt.synopsis_version_id
                 or version.source_evidence_version_id != attempt.synopsis_version_id
-            ):
-                # Processing-backed review data is only safe to display when its
-                # evidence can be proven to come from the exact attempt version.
-                continue
+            )
             embedded_confidence = version.value_json.get("confidence")
             confidence = version.confidence
             if confidence is None and isinstance(embedded_confidence, (int, float)):
@@ -180,12 +233,13 @@ class FactReviewService:
                     fact=fact,
                     value=version.value_json,
                     confidence=confidence,
-                    evidence_id=evidence.id if evidence is not None else None,
-                    evidence_location=evidence.location_json if evidence is not None else None,
-                    evidence_text=evidence.text if evidence is not None else None,
+                    evidence_id=evidence.id if evidence_valid and evidence is not None else None,
+                    evidence_location=evidence.location_json if evidence_valid and evidence is not None else None,
+                    evidence_text=evidence.text if evidence_valid and evidence is not None else None,
                     extractor_version=attempt.extractor_version if attempt is not None else None,
                     synopsis_version_id=attempt.synopsis_version_id if attempt is not None else None,
                     downstream_impact=self._downstream_impact(fact.kind),
+                    evidence_valid=evidence_valid,
                 )
             )
         return items

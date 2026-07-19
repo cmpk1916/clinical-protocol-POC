@@ -87,6 +87,16 @@ def test_archived_review_is_viewable_but_every_fact_mutation_is_rejected(
         )
         assert response.status_code == 409
         assert response.json() == {"detail": {"code": "STUDY_ARCHIVED"}}
+
+    for payload in (
+        {"action": "correct_and_approve", "expected_version": 999},
+        {"action": "resolve_conflict", "expected_version": 999, "rationale": "   "},
+    ):
+        response = client.post(
+            "/api/facts/fact-a/review", headers=headers, json=payload
+        )
+        assert response.status_code == 409
+        assert response.json() == {"detail": {"code": "STUDY_ARCHIVED"}}
     get_settings.cache_clear()
 
 

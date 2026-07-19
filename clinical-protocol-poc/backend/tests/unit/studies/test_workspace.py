@@ -216,3 +216,32 @@ def test_workspace_surfaces_quality_blockers_before_export(session: Session) -> 
     assert summary.step == "export"
     assert summary.next_action.kind == "review_quality"
     assert {item.code for item in summary.blockers} == {"INCOMPLETE_PROVENANCE"}
+
+
+def test_workspace_fails_closed_when_required_passage_section_is_duplicated(
+    session: Session,
+) -> None:
+    ctx, study_id = _scenario(session, "accepted_facts")
+    for index, section in enumerate(
+        ("synopsis", "objectives_endpoints", "study_design", "study_design")
+    ):
+        session.add(
+            Passage(
+                id=f"duplicate-{index}",
+                tenant_id="tenant",
+                study_id=study_id,
+                section=section,
+                status="accepted",
+            )
+        )
+    session.flush()
+
+    summary = WorkspaceSummaryService(session).get(ctx, study_id)
+
+    assert summary.step == "passage_review"
+    assert summary.next_action.kind == "review_passages"
+    assert {item.code for item in summary.blockers} == {
+        "PASSAGE_SECTION_DUPLICATE",
+        "PASSAGE_SECTION_MISSING",
+    }
+    assert summary.steps[3].status == "blocked"

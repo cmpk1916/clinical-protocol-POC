@@ -17,6 +17,7 @@ export type ReviewItem = {
   currentValue: string;
   evidenceLocation: string;
   evidenceText: string;
+  evidenceValid?: boolean;
   confidence: number;
   downstreamImpact: string[];
   isCritical: boolean;

@@ -24,7 +24,7 @@ export type ReviewApi = {
     studyId: string;
     factId: string;
     versionToken: string;
-    action: "reject" | "defer";
+    action: "reject" | "defer" | "resume" | "resolve_conflict";
     rationale: string;
   }): Promise<ReviewQueuePayload>;
 };
@@ -186,9 +186,11 @@ type ReviewPayload = {
     id: string;
     kind: string;
     status: "candidate" | "conflicted";
+    deferred: boolean;
     current_value: Record<string, unknown>;
     confidence: number | null;
     source_evidence: null | { location: Record<string, unknown>; text: string };
+    evidence_valid: boolean;
     critical: boolean;
     version: number;
     downstream_impact: string[];
@@ -202,8 +204,7 @@ function displayValue(value: Record<string, unknown>): string {
   return parts.length ? parts.join(" ") : JSON.stringify(value);
 }
 
-function displayLocation(location: Record<string, unknown> | undefined): string {
-  if (!location) return "Evidence location unavailable";
+function displayLocation(location: Record<string, unknown>): string {
   const kind = typeof location.kind === "string" ? location.kind : "source";
   const index = typeof location.index === "number" ? ` ${location.index + 1}` : "";
   return `${kind[0]?.toUpperCase() ?? ""}${kind.slice(1)}${index}`;
@@ -216,17 +217,25 @@ function mapReview(payload: ReviewPayload): ReviewQueuePayload {
     category: item.kind,
     candidateValue: displayValue(item.current_value),
     currentValue: "Unapproved",
-    evidenceLocation: displayLocation(item.source_evidence?.location),
-    evidenceText: item.source_evidence?.text ?? "Evidence text unavailable",
+    evidenceLocation: item.evidence_valid && item.source_evidence
+      ? displayLocation(item.source_evidence.location)
+      : "",
+    evidenceText: item.evidence_valid && item.source_evidence ? item.source_evidence.text : "",
+    evidenceValid: item.evidence_valid && item.source_evidence !== null,
     confidence: item.confidence ?? 0,
     downstreamImpact: item.downstream_impact,
     isCritical: item.critical,
     versionToken: String(item.version),
-    status: item.status === "conflicted" ? "conflict" : "needs_review",
+    status: item.status === "conflicted" ? "conflict" : item.deferred ? "deferred" : "needs_review",
   }));
   const blockers = items
     .filter((item) => item.isCritical || item.status === "conflict")
-    .map((item) => `${item.label} requires review before export.`);
+    .map((item) => `${item.label} requires review before export.`)
+    .concat(
+      items
+        .filter((item) => item.evidenceValid === false)
+        .map((item) => `${item.label} is blocked because exact source evidence could not be verified.`),
+    );
   return { blockers, items, readOnly: payload.read_only };
 }
 

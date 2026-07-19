@@ -100,6 +100,9 @@ class WorkspaceSummaryService:
         ("passage_review", "Passage review"),
         ("export", "Export"),
     )
+    _REQUIRED_PASSAGE_SECTIONS = frozenset(
+        {"synopsis", "objectives_endpoints", "study_design", "eligibility"}
+    )
 
     def __init__(self, session: Session) -> None:
         self._session = session
@@ -110,18 +113,30 @@ class WorkspaceSummaryService:
         inputs = self._inputs(context.tenant_id, study_id)
         processing = self._processing(context.tenant_id, study_id, inputs["synopsis"])
         counts = self._counts(context.tenant_id, study_id)
+        passages = self._passages(context.tenant_id, study_id)
+        passage_structure_blockers = self._passage_structure_blockers(passages)
+        passages_ready = (
+            not passage_structure_blockers
+            and all(status == "accepted" for _, status in passages)
+        )
         quality_blockers = (
             tuple(
                 WorkspaceBlocker(item.code, item.message)
                 for item in QualityService(self._session).calculate(context, study_id).blockers
             )
-            if counts.accepted_passages >= 4
-            and counts.accepted_passages == counts.total_passages
+            if passages_ready
             else ()
         )
 
         step, blockers, action = self._derive(
-            study, study_id, inputs, processing, counts, quality_blockers
+            study,
+            study_id,
+            inputs,
+            processing,
+            counts,
+            passages,
+            passage_structure_blockers,
+            quality_blockers,
         )
         completion = {
             "inputs": all(inputs.values()),
@@ -131,7 +146,7 @@ class WorkspaceSummaryService:
                 and counts.candidate_facts == 0
                 and counts.conflicted_facts == 0
             ),
-            "passage_review": counts.total_passages >= 4 and counts.accepted_passages >= 4,
+            "passage_review": passages_ready,
             "export": counts.exports > 0,
         }
         steps = tuple(
@@ -247,6 +262,43 @@ class WorkspaceSummaryService:
             exports=exports or 0,
         )
 
+    def _passages(self, tenant_id: str, study_id: str) -> tuple[tuple[str, str], ...]:
+        return tuple(
+            (section, status)
+            for section, status in self._session.execute(
+                select(Passage.section, Passage.status).where(
+                    Passage.tenant_id == tenant_id,
+                    Passage.study_id == study_id,
+                )
+            )
+        )
+
+    @classmethod
+    def _passage_structure_blockers(
+        cls, passages: tuple[tuple[str, str], ...]
+    ) -> tuple[WorkspaceBlocker, ...]:
+        sections = [section for section, _ in passages]
+        missing = cls._REQUIRED_PASSAGE_SECTIONS.difference(sections)
+        duplicates = {section for section in sections if sections.count(section) > 1}
+        blockers: list[WorkspaceBlocker] = []
+        if missing:
+            blockers.append(
+                WorkspaceBlocker(
+                    "PASSAGE_SECTION_MISSING",
+                    "Required draft sections are missing: " + ", ".join(sorted(missing)) + ".",
+                )
+            )
+        if duplicates:
+            blockers.append(
+                WorkspaceBlocker(
+                    "PASSAGE_SECTION_DUPLICATE",
+                    "Duplicate current draft sections must be resolved: "
+                    + ", ".join(sorted(duplicates))
+                    + ".",
+                )
+            )
+        return tuple(blockers)
+
     @staticmethod
     def _derive(
         study: Study,
@@ -254,6 +306,8 @@ class WorkspaceSummaryService:
         inputs: dict[str, WorkspaceInput | None],
         processing: WorkspaceProcessing | None,
         counts: WorkspaceCounts,
+        passages: tuple[tuple[str, str], ...],
+        passage_structure_blockers: tuple[WorkspaceBlocker, ...],
         quality_blockers: tuple[WorkspaceBlocker, ...],
     ) -> tuple[WorkspaceStep, tuple[WorkspaceBlocker, ...], WorkspaceAction]:
         if study.lifecycle == "archived":
@@ -323,7 +377,7 @@ class WorkspaceSummaryService:
                     href=f"/studies/{study_id}/review",
                 ),
             )
-        if counts.total_passages == 0:
+        if not passages:
             return (
                 "passage_review",
                 (),
@@ -333,8 +387,10 @@ class WorkspaceSummaryService:
                     href=f"/studies/{study_id}/draft",
                 ),
             )
-        if counts.accepted_passages < 4 or counts.accepted_passages != counts.total_passages:
-            if counts.stale_passages:
+        if passage_structure_blockers or any(status != "accepted" for _, status in passages):
+            if passage_structure_blockers:
+                passage_blockers = passage_structure_blockers
+            elif counts.stale_passages:
                 passage_blockers = (
                     WorkspaceBlocker(
                         "STALE_PASSAGE",

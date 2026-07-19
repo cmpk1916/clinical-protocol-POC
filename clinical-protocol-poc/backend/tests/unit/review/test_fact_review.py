@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from protocol_poc.audit.models import AuditEvent
 from protocol_poc.db import Base
 from protocol_poc.review.fact_service import ExplicitConfirmationRequired, FactReviewService, UnresolvedConflict
+from protocol_poc.studies.service import StudyArchived
 from protocol_poc.studies.models import Fact, FactVersion, Study
 from protocol_poc.tenancy import TenantContext
 
@@ -52,3 +53,32 @@ def test_correction_supersedes_version_and_appends_audit(session: Session) -> No
     assert result.status == "approved"
     assert [version.is_current for version in versions] == [False, True]
     assert session.scalar(select(AuditEvent).where(AuditEvent.event_type == "fact.corrected_and_approved")) is not None
+
+
+def test_archived_guard_precedes_fact_version_validation(session: Session) -> None:
+    fact = add_fact(session, fact_id="archived")
+    study = session.get(Study, "study-a")
+    assert study is not None
+    study.lifecycle = "archived"
+    session.commit()
+
+    with pytest.raises(StudyArchived):
+        FactReviewService(session).approve(
+            TenantContext("tenant-a", "writer-a"),
+            fact.id,
+            expected_version=999,
+            explicitly_confirmed=True,
+        )
+
+
+def test_deferred_fact_remains_visible_and_can_be_resumed(session: Session) -> None:
+    fact = add_fact(session, fact_id="deferred")
+    service = FactReviewService(session)
+    ctx = TenantContext("tenant-a", "writer-a")
+
+    service.defer(ctx, fact.id, expected_version=1, rationale="Review later")
+    assert [item.id for item in service.review_queue(ctx, "study-a")] == [fact.id]
+
+    resumed = service.resume(ctx, fact.id, expected_version=1, rationale="Evidence checked")
+
+    assert resumed.deferred is False

@@ -22,6 +22,7 @@ export function ReviewQueue({ studyId, api = protocolReviewApi }: Readonly<Props
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
   const [busyFactId, setBusyFactId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [conflictRationales, setConflictRationales] = useState<Record<string, string>>({});
   const confirmationRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -81,7 +82,11 @@ export function ReviewQueue({ studyId, api = protocolReviewApi }: Readonly<Props
     void saveApproval(item, false);
   };
 
-  const review = async (item: ReviewItem, action: "reject" | "defer") => {
+  const review = async (
+    item: ReviewItem,
+    action: "reject" | "defer" | "resume" | "resolve_conflict",
+    rationale?: string,
+  ) => {
     setBusyFactId(item.id);
     setError(null);
     try {
@@ -90,7 +95,7 @@ export function ReviewQueue({ studyId, api = protocolReviewApi }: Readonly<Props
         factId: item.id,
         versionToken: item.versionToken,
         action,
-        rationale: `${action === "reject" ? "Rejected" : "Deferred"} during guided review.`,
+        rationale: rationale ?? `${action === "reject" ? "Rejected" : action === "defer" ? "Deferred" : "Resumed"} during guided review.`,
       }));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : `Unable to ${action} fact`);
@@ -119,7 +124,13 @@ export function ReviewQueue({ studyId, api = protocolReviewApi }: Readonly<Props
               <p>
                 {item.category} · Status: {item.status} · Version token: {item.versionToken}
               </p>
-              <EvidenceComparison item={item} />
+              {item.evidenceValid === false ? (
+                <p role="alert" aria-label="Exact evidence verification failed">
+                  Exact source evidence could not be verified. Review actions are disabled.
+                </p>
+              ) : (
+                <EvidenceComparison item={item} />
+              )}
               <section aria-label={`Downstream impact for ${item.label}`}>
                 <h3>Downstream impact</h3>
                 <ul>
@@ -129,11 +140,55 @@ export function ReviewQueue({ studyId, api = protocolReviewApi }: Readonly<Props
                 </ul>
               </section>
               <menu aria-label={`Review actions for ${item.label}`}>
-                <button type="button" disabled={queue.readOnly || busyFactId === item.id} onClick={() => approve(item)}>
-                  Approve fact
-                </button>
-                <button type="button" disabled={queue.readOnly || busyFactId === item.id} onClick={() => void review(item, "reject")}>Reject fact</button>
-                <button type="button" disabled={queue.readOnly || busyFactId === item.id} onClick={() => void review(item, "defer")}>Defer fact</button>
+                {item.status === "deferred" ? (
+                  <button
+                    type="button"
+                    disabled={queue.readOnly || item.evidenceValid === false || busyFactId === item.id}
+                    onClick={() => void review(item, "resume")}
+                  >
+                    Resume review
+                  </button>
+                ) : item.status === "conflict" ? (
+                  <>
+                    <label>
+                      Conflict resolution rationale
+                      <textarea
+                        value={conflictRationales[item.id] ?? ""}
+                        onChange={(event) => {
+                          const rationale = event.currentTarget.value;
+                          setConflictRationales((current) => ({
+                            ...current,
+                            [item.id]: rationale,
+                          }));
+                        }}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      disabled={
+                        queue.readOnly
+                        || item.evidenceValid === false
+                        || busyFactId === item.id
+                        || !(conflictRationales[item.id] ?? "").trim()
+                      }
+                      onClick={() => void review(
+                        item,
+                        "resolve_conflict",
+                        (conflictRationales[item.id] ?? "").trim(),
+                      )}
+                    >
+                      Resolve conflict
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button type="button" disabled={queue.readOnly || item.evidenceValid === false || busyFactId === item.id} onClick={() => approve(item)}>
+                      Approve fact
+                    </button>
+                    <button type="button" disabled={queue.readOnly || item.evidenceValid === false || busyFactId === item.id} onClick={() => void review(item, "reject")}>Reject fact</button>
+                    <button type="button" disabled={queue.readOnly || item.evidenceValid === false || busyFactId === item.id} onClick={() => void review(item, "defer")}>Defer fact</button>
+                  </>
+                )}
               </menu>
             </article>
           </li>
