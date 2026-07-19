@@ -7,7 +7,8 @@ from sqlalchemy.orm import Session
 
 from protocol_poc.config import get_settings
 from protocol_poc.identity import IdentityVerificationError, verify_identity_headers
-from protocol_poc.review.fact_service import FactReviewError, FactReviewService
+from protocol_poc.review.fact_service import FactNotFound, FactReviewError, FactReviewService
+from protocol_poc.studies.service import StudyArchived, StudyNotFound, StudyService
 from protocol_poc.tenancy import TenantContext
 
 
@@ -41,8 +42,12 @@ class ReviewCommand(BaseModel):
 @router.get("/studies/{study_id}/fact-review")
 def review_queue(study_id: str, request: Request, session: Session = Depends(database_session)) -> dict[str, object]:
     ctx = identity(request)
+    try:
+        study = StudyService(session).get(ctx, study_id)
+    except StudyNotFound as error:
+        raise HTTPException(status_code=404, detail={"code": "STUDY_NOT_FOUND"}) from error
     items = FactReviewService(session).review_items(ctx, study_id)
-    return {"items": [
+    return {"read_only": study.lifecycle == "archived", "items": [
         {
             "id": item.fact.id,
             "kind": item.fact.kind,
@@ -85,6 +90,10 @@ def review_fact(fact_id: str, command: ReviewCommand, request: Request, session:
             fact = service.defer(ctx, fact_id, expected_version=command.expected_version, rationale=command.rationale)
         else:
             fact = service.resolve_conflict(ctx, fact_id, expected_version=command.expected_version, resolution=command.rationale)
+    except (StudyNotFound, FactNotFound) as error:
+        raise HTTPException(status_code=404, detail={"code": "STUDY_NOT_FOUND"}) from error
+    except StudyArchived as error:
+        raise HTTPException(status_code=409, detail={"code": "STUDY_ARCHIVED"}) from error
     except FactReviewError as error:
         raise HTTPException(status_code=409, detail={"code": error.__class__.__name__.upper()}) from error
     return {"id": fact.id, "status": fact.status, "version": fact.current_version}

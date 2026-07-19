@@ -3,7 +3,7 @@
 import React from "react";
 import { useEffect, useRef, useState } from "react";
 
-import { demoReviewApi, type ReviewApi } from "../../lib/api";
+import { protocolReviewApi, type ReviewApi } from "../../lib/api";
 import type { ReviewItem, ReviewQueuePayload } from "../../lib/types";
 import { EvidenceComparison } from "./EvidenceComparison";
 
@@ -17,19 +17,23 @@ type PendingApproval = {
   confirmed: boolean;
 };
 
-export function ReviewQueue({ studyId, api = demoReviewApi }: Readonly<Props>) {
+export function ReviewQueue({ studyId, api = protocolReviewApi }: Readonly<Props>) {
   const [queue, setQueue] = useState<ReviewQueuePayload | null>(null);
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
+  const [busyFactId, setBusyFactId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const confirmationRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let active = true;
 
-    api.getReviewQueue(studyId).then((payload) => {
-      if (active) {
-        setQueue(payload);
-      }
-    });
+    api.getReviewQueue(studyId)
+      .then((payload) => {
+        if (active) setQueue(payload);
+      })
+      .catch((cause: unknown) => {
+        if (active) setError(cause instanceof Error ? cause.message : "Unable to load review queue");
+      });
 
     return () => {
       active = false;
@@ -42,9 +46,31 @@ export function ReviewQueue({ studyId, api = demoReviewApi }: Readonly<Props>) {
     }
   }, [pendingApproval]);
 
+  if (error && !queue) {
+    return <p role="alert">{error}</p>;
+  }
   if (!queue) {
     return <p>Loading review queue…</p>;
   }
+
+  const saveApproval = async (item: ReviewItem, explicitlyConfirmed: boolean) => {
+    setBusyFactId(item.id);
+    setError(null);
+    try {
+      const next = await api.approveFact({
+        studyId,
+        factId: item.id,
+        versionToken: item.versionToken,
+        explicitCriticalConfirmation: explicitlyConfirmed,
+      });
+      setQueue(next);
+      setPendingApproval(null);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to approve fact");
+    } finally {
+      setBusyFactId(null);
+    }
+  };
 
   const approve = (item: ReviewItem) => {
     if (item.isCritical) {
@@ -52,17 +78,34 @@ export function ReviewQueue({ studyId, api = demoReviewApi }: Readonly<Props>) {
       return;
     }
 
-    void api.approveFact({
-      studyId,
-      factId: item.id,
-      versionToken: item.versionToken,
-      explicitCriticalConfirmation: false,
-    });
+    void saveApproval(item, false);
+  };
+
+  const review = async (item: ReviewItem, action: "reject" | "defer") => {
+    setBusyFactId(item.id);
+    setError(null);
+    try {
+      setQueue(await api.reviewFact({
+        studyId,
+        factId: item.id,
+        versionToken: item.versionToken,
+        action,
+        rationale: `${action === "reject" ? "Rejected" : "Deferred"} during guided review.`,
+      }));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : `Unable to ${action} fact`);
+    } finally {
+      setBusyFactId(null);
+    }
   };
 
   return (
     <section aria-labelledby="review-queue-heading">
       <h1 id="review-queue-heading">Guided Review</h1>
+      {queue.readOnly ? (
+        <p role="status">This archived review is read-only. Saved evidence remains available.</p>
+      ) : null}
+      {error ? <p role="alert">{error}</p> : null}
       {queue.blockers.map((blocker) => (
         <p role="alert" key={blocker}>
           {blocker}
@@ -86,29 +129,24 @@ export function ReviewQueue({ studyId, api = demoReviewApi }: Readonly<Props>) {
                 </ul>
               </section>
               <menu aria-label={`Review actions for ${item.label}`}>
-                <button type="button" onClick={() => approve(item)}>
+                <button type="button" disabled={queue.readOnly || busyFactId === item.id} onClick={() => approve(item)}>
                   Approve fact
                 </button>
-                <button type="button">Edit fact</button>
-                <button type="button">Reject fact</button>
-                <button type="button">Defer fact</button>
+                <button type="button" disabled={queue.readOnly || busyFactId === item.id} onClick={() => void review(item, "reject")}>Reject fact</button>
+                <button type="button" disabled={queue.readOnly || busyFactId === item.id} onClick={() => void review(item, "defer")}>Defer fact</button>
               </menu>
             </article>
           </li>
         ))}
       </ol>
+      {queue.items.length === 0 ? <p role="status">All candidate facts have been reviewed.</p> : null}
 
       {pendingApproval ? (
         <form
           aria-label={`Critical approval for ${pendingApproval.item.label}`}
           onSubmit={(event) => {
             event.preventDefault();
-            void api.approveFact({
-              studyId,
-              factId: pendingApproval.item.id,
-              versionToken: pendingApproval.item.versionToken,
-              explicitCriticalConfirmation: pendingApproval.confirmed,
-            });
+            void saveApproval(pendingApproval.item, pendingApproval.confirmed);
           }}
         >
           <label>
@@ -127,7 +165,7 @@ export function ReviewQueue({ studyId, api = demoReviewApi }: Readonly<Props>) {
             I explicitly confirm this critical fact
           </label>
           <p>Approval will use version token {pendingApproval.item.versionToken}.</p>
-          <button type="submit">Confirm approval</button>
+          <button type="submit" disabled={busyFactId === pendingApproval.item.id}>Confirm approval</button>
         </form>
       ) : null}
     </section>

@@ -9,6 +9,7 @@ from protocol_poc.review.conflicts import FactConflict
 from protocol_poc.review.impact_service import ImpactService
 from protocol_poc.files.models import SourceEvidence
 from protocol_poc.studies.models import Fact, FactVersion, ProcessingAttempt
+from protocol_poc.studies.service import StudyService
 from protocol_poc.tenancy import TenantContext, require_tenant_context
 
 
@@ -57,6 +58,7 @@ class FactReviewService:
             raise FactNotFound(fact_id)
         if fact.current_version != expected_version:
             raise VersionConflict(f"expected version {expected_version}, found {fact.current_version}")
+        StudyService(self.session).require_active(context, fact.study_id)
         return fact
 
     @staticmethod

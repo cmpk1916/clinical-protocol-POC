@@ -21,6 +21,7 @@ const criticalFactApi: ReviewApi = {
           candidateValue: "10 mg once daily",
           currentValue: "Unapproved",
           evidenceLocation: "Synopsis p. 4, Intervention paragraph 2",
+          evidenceText: "Intervention: Example drug 10 mg once daily",
           confidence: 0.91,
           downstreamImpact: ["Draft dose passage", "Traceability table", "Export gate"],
           isCritical: true,
@@ -31,7 +32,10 @@ const criticalFactApi: ReviewApi = {
     };
   },
   async approveFact() {
-    return { ok: true };
+    return { blockers: [], items: [] };
+  },
+  async reviewFact() {
+    return { blockers: [], items: [] };
   },
 };
 
@@ -47,5 +51,29 @@ describe("ReviewQueue", () => {
     const confirmation = screen.getByLabelText("I explicitly confirm this critical fact");
     assert.equal(confirmation.hasAttribute("required"), true);
     assert.equal(document.activeElement, confirmation);
+    assert.ok(screen.getByText("Intervention: Example drug 10 mg once daily"));
+  });
+
+  it("refreshes the queue from the authoritative approval result", async () => {
+    const user = userEvent.setup();
+    render(<ReviewQueue studyId="study-1" api={criticalFactApi} />);
+    await screen.findByRole("button", { name: "Approve fact" });
+    await user.click(screen.getByRole("button", { name: "Approve fact" }));
+    await user.click(screen.getByLabelText("I explicitly confirm this critical fact"));
+    await user.click(screen.getByRole("button", { name: "Confirm approval" }));
+    assert.ok(await screen.findByText("All candidate facts have been reviewed."));
+  });
+
+  it("keeps archived evidence viewable while disabling review actions", async () => {
+    const archivedApi: ReviewApi = {
+      ...criticalFactApi,
+      async getReviewQueue(studyId) {
+        return { ...(await criticalFactApi.getReviewQueue(studyId)), readOnly: true };
+      },
+    };
+    render(<ReviewQueue studyId="study-1" api={archivedApi} />);
+    assert.ok(await screen.findByText(/archived review is read-only/i));
+    assert.ok(screen.getByText("Intervention: Example drug 10 mg once daily"));
+    assert.equal(screen.getByRole("button", { name: "Approve fact" }).hasAttribute("disabled"), true);
   });
 });

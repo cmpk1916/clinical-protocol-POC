@@ -6,7 +6,11 @@ import type {
   QualityScorecard,
   ReviewQueuePayload,
   StudyModel,
+  WorkspaceInput,
+  WorkspaceSummary,
 } from "./types";
+
+export type { WorkspaceSummary } from "./types";
 
 export type ReviewApi = {
   getReviewQueue(studyId: string): Promise<ReviewQueuePayload>;
@@ -15,30 +19,251 @@ export type ReviewApi = {
     factId: string;
     versionToken: string;
     explicitCriticalConfirmation: boolean;
-  }): Promise<{ ok: true }>;
+  }): Promise<ReviewQueuePayload>;
+  reviewFact(input: {
+    studyId: string;
+    factId: string;
+    versionToken: string;
+    action: "reject" | "defer";
+    rationale: string;
+  }): Promise<ReviewQueuePayload>;
+};
+
+export type ValidationFinding = { code: string; field: string; message: string };
+
+export type UploadOutcome = {
+  status: string;
+  findings: ValidationFinding[];
+};
+
+export type InputApi = {
+  uploadInput(
+    studyId: string,
+    role: "synopsis" | "template",
+    file: File,
+  ): Promise<{ outcome: UploadOutcome; workspace: WorkspaceSummary }>;
+};
+
+export type WorkspaceApi = InputApi & {
+  getWorkspace(studyId: string): Promise<WorkspaceSummary>;
+  processSynopsis(studyId: string, versionId: string): Promise<WorkspaceSummary>;
+  retryProcessing(studyId: string, attemptId: string): Promise<WorkspaceSummary>;
+};
+
+type WorkspacePayload = {
+  study: WorkspaceSummary["study"];
+  step: WorkspaceSummary["step"];
+  read_only: boolean;
+  steps: WorkspaceSummary["steps"];
+  counts: {
+    candidate_facts: number;
+    conflicted_facts: number;
+    approved_facts: number;
+    accepted_passages: number;
+    total_passages: number;
+    stale_passages: number;
+    blocked_passages: number;
+    rejected_passages: number;
+    exports: number;
+  };
+  blockers: WorkspaceSummary["blockers"];
+  inputs: Record<"synopsis" | "template", null | {
+    role: "synopsis" | "template";
+    version_id: string;
+    version: number;
+    filename: string;
+    conformance_status: string;
+  }>;
+  processing: null | {
+    attempt_id: string;
+    status: string;
+    findings: WorkspaceSummary["blockers"];
+  };
+  next_action: {
+    kind: string;
+    label: string;
+    target_id: string | null;
+    href: string | null;
+  };
+};
+
+function mapInput(input: WorkspacePayload["inputs"]["synopsis"]): WorkspaceInput | null {
+  return input ? {
+    role: input.role,
+    versionId: input.version_id,
+    version: input.version,
+    filename: input.filename,
+    conformanceStatus: input.conformance_status,
+  } : null;
+}
+
+export function toWorkspaceSummary(payload: WorkspacePayload): WorkspaceSummary {
+  return {
+    study: payload.study,
+    step: payload.step,
+    readOnly: payload.read_only,
+    steps: payload.steps,
+    counts: {
+      candidateFacts: payload.counts.candidate_facts,
+      conflictedFacts: payload.counts.conflicted_facts,
+      approvedFacts: payload.counts.approved_facts,
+      acceptedPassages: payload.counts.accepted_passages,
+      totalPassages: payload.counts.total_passages,
+      stalePassages: payload.counts.stale_passages,
+      blockedPassages: payload.counts.blocked_passages,
+      rejectedPassages: payload.counts.rejected_passages,
+      exports: payload.counts.exports,
+    },
+    blockers: payload.blockers,
+    inputs: {
+      synopsis: mapInput(payload.inputs.synopsis),
+      template: mapInput(payload.inputs.template),
+    },
+    processing: payload.processing ? {
+      attemptId: payload.processing.attempt_id,
+      status: payload.processing.status,
+      findings: payload.processing.findings,
+    } : null,
+    nextAction: {
+      kind: payload.next_action.kind,
+      label: payload.next_action.label,
+      targetId: payload.next_action.target_id,
+      href: payload.next_action.href,
+    },
+  };
+}
+
+async function errorMessage(response: Response, fallback: string): Promise<string> {
+  const payload = await response.json().catch(() => null) as null | {
+    detail?: { code?: string } | string;
+  };
+  if (typeof payload?.detail === "object" && payload.detail.code) return payload.detail.code;
+  if (typeof payload?.detail === "string") return payload.detail;
+  return fallback;
+}
+
+async function loadWorkspace(studyId: string): Promise<WorkspaceSummary> {
+  const response = await fetch(`/api/local/studies/${encodeURIComponent(studyId)}/workspace`);
+  if (!response.ok) throw new Error(await errorMessage(response, "Unable to load workspace"));
+  return toWorkspaceSummary(await response.json() as WorkspacePayload);
+}
+
+export const protocolWorkspaceApi: WorkspaceApi = {
+  getWorkspace: loadWorkspace,
+  async uploadInput(studyId, role, file) {
+    const form = new FormData();
+    form.set("role", role);
+    form.set("file", file);
+    const response = await fetch(`/api/local/studies/${encodeURIComponent(studyId)}/inputs`, {
+      method: "POST",
+      body: form,
+    });
+    if (!response.ok) throw new Error(await errorMessage(response, `Unable to upload ${role}`));
+    const outcome = await response.json() as UploadOutcome;
+    return { outcome, workspace: await loadWorkspace(studyId) };
+  },
+  async processSynopsis(studyId, versionId) {
+    const response = await fetch(
+      `/api/local/studies/${encodeURIComponent(studyId)}/inputs/${encodeURIComponent(versionId)}/process`,
+      { method: "POST" },
+    );
+    if (!response.ok) throw new Error(await errorMessage(response, "Unable to process synopsis"));
+    return loadWorkspace(studyId);
+  },
+  async retryProcessing(studyId, attemptId) {
+    const response = await fetch(
+      `/api/local/studies/${encodeURIComponent(studyId)}/processing-attempts/${encodeURIComponent(attemptId)}/retry`,
+      { method: "POST" },
+    );
+    if (!response.ok) throw new Error(await errorMessage(response, "Unable to retry processing"));
+    return loadWorkspace(studyId);
+  },
+};
+
+type ReviewPayload = {
+  read_only: boolean;
+  items: Array<{
+    id: string;
+    kind: string;
+    status: "candidate" | "conflicted";
+    current_value: Record<string, unknown>;
+    confidence: number | null;
+    source_evidence: null | { location: Record<string, unknown>; text: string };
+    critical: boolean;
+    version: number;
+    downstream_impact: string[];
+  }>;
+};
+
+function displayValue(value: Record<string, unknown>): string {
+  const parts = [value.value, value.unit, value.frequency].filter(
+    (part): part is string | number => typeof part === "string" || typeof part === "number",
+  );
+  return parts.length ? parts.join(" ") : JSON.stringify(value);
+}
+
+function displayLocation(location: Record<string, unknown> | undefined): string {
+  if (!location) return "Evidence location unavailable";
+  const kind = typeof location.kind === "string" ? location.kind : "source";
+  const index = typeof location.index === "number" ? ` ${location.index + 1}` : "";
+  return `${kind[0]?.toUpperCase() ?? ""}${kind.slice(1)}${index}`;
+}
+
+function mapReview(payload: ReviewPayload): ReviewQueuePayload {
+  const items = payload.items.map((item): ReviewQueuePayload["items"][number] => ({
+    id: item.id,
+    label: item.kind.replaceAll("_", " ").replace(/^./, (letter) => letter.toUpperCase()),
+    category: item.kind,
+    candidateValue: displayValue(item.current_value),
+    currentValue: "Unapproved",
+    evidenceLocation: displayLocation(item.source_evidence?.location),
+    evidenceText: item.source_evidence?.text ?? "Evidence text unavailable",
+    confidence: item.confidence ?? 0,
+    downstreamImpact: item.downstream_impact,
+    isCritical: item.critical,
+    versionToken: String(item.version),
+    status: item.status === "conflicted" ? "conflict" : "needs_review",
+  }));
+  const blockers = items
+    .filter((item) => item.isCritical || item.status === "conflict")
+    .map((item) => `${item.label} requires review before export.`);
+  return { blockers, items, readOnly: payload.read_only };
+}
+
+async function getReviewQueue(studyId: string): Promise<ReviewQueuePayload> {
+  const response = await fetch(`/api/local/studies/${encodeURIComponent(studyId)}/fact-review`);
+  if (!response.ok) throw new Error(await errorMessage(response, "Unable to load fact review"));
+  return mapReview(await response.json() as ReviewPayload);
+}
+
+async function postReview(
+  input: { studyId: string; factId: string; versionToken: string },
+  body: Record<string, unknown>,
+): Promise<ReviewQueuePayload> {
+  const response = await fetch(`/api/local/facts/${encodeURIComponent(input.factId)}/review`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ expected_version: Number(input.versionToken), ...body }),
+  });
+  if (!response.ok) throw new Error(await errorMessage(response, "Unable to save fact review"));
+  return getReviewQueue(input.studyId);
+}
+
+export const protocolReviewApi: ReviewApi = {
+  getReviewQueue,
+  approveFact(input) {
+    return postReview(input, {
+      action: "approve",
+      explicitly_confirmed: input.explicitCriticalConfirmation,
+    });
+  },
+  reviewFact(input) {
+    return postReview(input, { action: input.action, rationale: input.rationale });
+  },
 };
 
 export type ModelApi = {
   getStudyModel(studyId: string): Promise<StudyModel>;
-};
-
-const reviewQueue: ReviewQueuePayload = {
-  blockers: ["Export blocked: 1 critical fact requires writer confirmation"],
-  items: [
-    {
-      id: "fact-dose",
-      label: "Investigational product dose",
-      category: "Intervention",
-      candidateValue: "10 mg once daily",
-      currentValue: "Unapproved",
-      evidenceLocation: "Synopsis p. 4, Intervention paragraph 2",
-      confidence: 0.91,
-      downstreamImpact: ["Draft dose passage", "Traceability table", "Export gate"],
-      isCritical: true,
-      versionToken: "v-dose-3",
-      status: "needs_review",
-    },
-  ],
 };
 
 const studyModel: StudyModel = {
@@ -66,15 +291,6 @@ const studyModel: StudyModel = {
       relationships: [{ label: "measured at", target: "Week 24" }],
     },
   ],
-};
-
-export const demoReviewApi: ReviewApi = {
-  async getReviewQueue() {
-    return reviewQueue;
-  },
-  async approveFact() {
-    return { ok: true };
-  },
 };
 
 export const demoModelApi: ModelApi = {

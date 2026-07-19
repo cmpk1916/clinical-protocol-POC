@@ -1,4 +1,5 @@
 from collections.abc import Iterator
+from dataclasses import asdict
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -15,6 +16,7 @@ from protocol_poc.studies.service import (
     StudyVersionConflict,
 )
 from protocol_poc.tenancy import TenantContext
+from protocol_poc.studies.workspace import WorkspaceSummaryService
 
 
 router = APIRouter(prefix="/api/studies")
@@ -105,6 +107,19 @@ def get_study(
     except StudyNotFound as error:
         _raise_domain_error(error)
     return _study_payload(study)
+
+
+@router.get("/{study_id}/workspace")
+def get_workspace(
+    study_id: str,
+    request: Request,
+    session: Session = Depends(database_session),
+) -> dict[str, object]:
+    try:
+        summary = WorkspaceSummaryService(session).get(identity(request), study_id)
+    except StudyNotFound as error:
+        _raise_domain_error(error)
+    return asdict(summary)
 
 
 @router.post("/{study_id}/archive")

@@ -33,8 +33,36 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .empty-state { border: 1px dashed #aebbb5; border-radius: 12px; padding: 32px; text-align: center; }
 .error-banner { border-left: 4px solid #a93a2c; background: #fff0ed; padding: 14px; }
 
+.workspace-shell { width: min(1120px, calc(100% - 32px)); margin: 0 auto; padding: 40px 0 72px; }
+.workspace-header, .next-action { display: flex; justify-content: space-between; align-items: center; gap: 24px; }
+.workspace-header { margin-bottom: 24px; }
+.workspace-header h1 { margin: 4px 0 8px; font-size: clamp(2rem, 5vw, 3.75rem); letter-spacing: -.04em; }
+.workspace-header a, .primary-action { color: #246653; font-weight: 700; }
+.progress-guide, .input-panel, .blocker-panel, .next-action { background: #fff; border: 1px solid #d9dfd8; border-radius: 16px; padding: 20px; margin-bottom: 18px; }
+.progress-guide ol { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; list-style: none; padding: 0; margin: 0; }
+.progress-guide li { border-top: 4px solid #cbd4cf; padding: 10px 4px 0; }
+.progress-guide li[data-status="complete"] { border-color: #246653; }
+.progress-guide li[data-status="current"], .progress-guide li[data-status="blocked"] { border-color: #bd6b2d; }
+.progress-guide span, .progress-guide small { display: block; }
+.progress-guide small { color: #65736d; margin-top: 4px; text-transform: capitalize; }
+.read-only-banner { border-left: 4px solid #476780; background: #edf5fa; padding: 14px; }
+.blocker-panel { border-color: #d9b4a9; background: #fff9f7; }
+.blocker-panel h2, .input-panel h2, .next-action h2 { margin-top: 0; }
+.finding-code { color: #65736d; font-size: .85em; }
+.input-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.input-card { border: 1px solid #d9dfd8; border-radius: 12px; padding: 18px; }
+.input-card h3 { margin: 4px 0; }
+.input-card form { display: grid; gap: 10px; margin-top: 16px; }
+.input-card input[type="file"] { width: 100%; }
+.input-card button { justify-self: start; }
+.next-action { box-shadow: 0 16px 50px rgb(24 43 37 / 7%); }
+.next-action p { margin-bottom: 0; }
+.primary-action { border: 1px solid #246653; border-radius: 8px; padding: 11px 16px; color: #fff; background: #246653; text-decoration: none; }
+
 @media (max-width: 700px) {
   .create-panel { grid-template-columns: 1fr; }
   .create-row, .study-card { align-items: stretch; flex-direction: column; }
   .study-heading { align-items: flex-start; flex-direction: column; }
+  .workspace-header, .next-action { align-items: flex-start; flex-direction: column; }
+  .progress-guide ol, .input-grid { grid-template-columns: 1fr; }
 }

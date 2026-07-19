@@ -18,6 +18,10 @@ export function EvidenceComparison({ item }: Readonly<{ item: ReviewItem }>) {
         <dd>{item.evidenceLocation}</dd>
       </div>
       <div>
+        <dt>Exact source evidence</dt>
+        <dd><blockquote>{item.evidenceText}</blockquote></dd>
+      </div>
+      <div>
         <dt>Confidence</dt>
         <dd>{Math.round(item.confidence * 100)}% confidence, supporting metadata only</dd>
       </div>

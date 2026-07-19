@@ -16,6 +16,7 @@ export type ReviewItem = {
   candidateValue: string;
   currentValue: string;
   evidenceLocation: string;
+  evidenceText: string;
   confidence: number;
   downstreamImpact: string[];
   isCritical: boolean;
@@ -23,9 +24,62 @@ export type ReviewItem = {
   status: ReviewStatus;
 };
 
+export type WorkspaceStep = "archived" | "inputs" | "processing" | "fact_review" | "passage_review" | "export";
+
+export type WorkspaceInput = {
+  role: "synopsis" | "template";
+  versionId: string;
+  version: number;
+  filename: string;
+  conformanceStatus: string;
+};
+
+export type WorkspaceBlocker = { code: string; message: string };
+
+export type WorkspaceSummary = {
+  study: {
+    id: string;
+    name: string;
+    lifecycle: "active" | "archived";
+    version: number;
+  };
+  step: WorkspaceStep;
+  readOnly: boolean;
+  steps: Array<{
+    key: string;
+    label: string;
+    status: "complete" | "current" | "blocked" | "upcoming";
+  }>;
+  counts: {
+    candidateFacts: number;
+    conflictedFacts: number;
+    approvedFacts: number;
+    acceptedPassages: number;
+    totalPassages: number;
+    stalePassages?: number;
+    blockedPassages?: number;
+    rejectedPassages?: number;
+    exports: number;
+  };
+  blockers: WorkspaceBlocker[];
+  inputs: Record<"synopsis" | "template", WorkspaceInput | null>;
+  processing: null | {
+    attemptId: string;
+    status: string;
+    findings: WorkspaceBlocker[];
+  };
+  nextAction: {
+    kind: string;
+    label: string;
+    targetId: string | null;
+    href: string | null;
+  };
+};
+
 export type ReviewQueuePayload = {
   blockers: string[];
   items: ReviewItem[];
+  readOnly?: boolean;
 };
 
 export type FactRelationship = {
