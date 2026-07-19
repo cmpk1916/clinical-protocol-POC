@@ -5,7 +5,12 @@ from sqlalchemy.orm import Session
 from protocol_poc.audit.models import AuditEvent
 from protocol_poc.db import Base
 from protocol_poc.files.models import FileRecord, FileVersion, SourceEvidence
-from protocol_poc.review.fact_service import ExplicitConfirmationRequired, FactReviewService, UnresolvedConflict
+from protocol_poc.review.fact_service import (
+    ExplicitConfirmationRequired,
+    FactReviewError,
+    FactReviewService,
+    UnresolvedConflict,
+)
 from protocol_poc.studies.service import StudyArchived
 from protocol_poc.studies.models import Fact, FactVersion, ProcessingAttempt, Study
 from protocol_poc.tenancy import TenantContext
@@ -117,3 +122,67 @@ def test_deferred_fact_remains_visible_and_can_be_resumed(session: Session) -> N
     resumed = service.resume(ctx, fact.id, expected_version=1, rationale="Evidence checked")
 
     assert resumed.deferred is False
+
+
+def test_approved_fact_cannot_be_approved_again(session: Session) -> None:
+    fact = add_fact(session, fact_id="already-approved", status="approved")
+
+    with pytest.raises(FactReviewError, match="cannot transition"):
+        FactReviewService(session).approve(
+            TenantContext("tenant-a", "writer-a"),
+            fact.id,
+            expected_version=1,
+            explicitly_confirmed=True,
+        )
+
+
+def test_rejected_fact_cannot_be_corrected_and_approved(session: Session) -> None:
+    fact = add_fact(session, fact_id="rejected-correction", status="rejected")
+
+    with pytest.raises(FactReviewError, match="cannot transition"):
+        FactReviewService(session).correct_and_approve(
+            TenantContext("tenant-a", "writer-a"),
+            fact.id,
+            expected_version=1,
+            value_json={"value": "12 mg"},
+            rationale="Invalid retry",
+            explicitly_confirmed=True,
+        )
+
+
+def test_approved_fact_cannot_be_rejected(session: Session) -> None:
+    fact = add_fact(session, fact_id="approved-rejection", status="approved")
+
+    with pytest.raises(FactReviewError, match="cannot transition"):
+        FactReviewService(session).reject(
+            TenantContext("tenant-a", "writer-a"),
+            fact.id,
+            expected_version=1,
+            rationale="Invalid rejection",
+        )
+
+
+def test_only_deferred_candidate_can_resume(session: Session) -> None:
+    fact = add_fact(session, fact_id="not-deferred")
+
+    with pytest.raises(FactReviewError, match="cannot transition"):
+        FactReviewService(session).resume(
+            TenantContext("tenant-a", "writer-a"),
+            fact.id,
+            expected_version=1,
+            rationale="Invalid resume",
+        )
+
+
+def test_deferred_candidate_cannot_be_deferred_again(session: Session) -> None:
+    fact = add_fact(session, fact_id="already-deferred")
+    fact.deferred = True
+    session.commit()
+
+    with pytest.raises(FactReviewError, match="cannot transition"):
+        FactReviewService(session).defer(
+            TenantContext("tenant-a", "writer-a"),
+            fact.id,
+            expected_version=1,
+            rationale="Invalid defer",
+        )

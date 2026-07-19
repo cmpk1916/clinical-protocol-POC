@@ -351,6 +351,229 @@ def test_review_mutations_fail_closed_without_a_processing_attempt_and_evidence(
     get_settings.cache_clear()
 
 
+@pytest.mark.parametrize(
+    ("action", "extra"),
+    [
+        ("approve", {"explicitly_confirmed": True}),
+        ("reject", {"rationale": "Reject"}),
+        ("defer", {"rationale": "Defer"}),
+        ("resume", {"rationale": "Resume"}),
+        ("resolve_conflict", {"rationale": "Resolve"}),
+    ],
+)
+def test_legacy_approved_fact_without_evidence_rejects_every_non_correction_action(
+    tmp_path, monkeypatch, action: str, extra: dict[str, object]
+) -> None:
+    monkeypatch.setenv(
+        "DATABASE_URL", f"sqlite+pysqlite:///{tmp_path / f'legacy-{action}.db'}"
+    )
+    monkeypatch.setenv("ALLOW_INSECURE_IDENTITY_HEADERS", "true")
+    monkeypatch.setenv("ENVIRONMENT", "test")
+    get_settings.cache_clear()
+    app = create_app()
+    Base.metadata.create_all(app.state.engine)
+    with app.state.session_factory() as session:
+        session.add(Study(id="study-a", tenant_id="tenant-a", name="Synthetic study"))
+        fact = Fact(
+            id="fact-a",
+            tenant_id="tenant-a",
+            study_id="study-a",
+            processing_attempt_id=None,
+            kind="population",
+            status="approved",
+        )
+        session.add(fact)
+        session.flush()
+        session.add(
+            FactVersion(
+                tenant_id="tenant-a",
+                fact_id=fact.id,
+                version=1,
+                value_json={"kind": "string", "value": "Synthetic adults"},
+                is_current=True,
+            )
+        )
+        session.commit()
+
+    response = TestClient(app).post(
+        "/api/facts/fact-a/review",
+        headers={"X-Tenant-ID": "tenant-a", "X-Actor-ID": "writer-a"},
+        json={"action": action, "expected_version": 1, **extra},
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": {"code": "EXACT_EVIDENCE_UNAVAILABLE"}}
+    get_settings.cache_clear()
+
+
+def test_legacy_approved_fact_without_evidence_retains_correction_path(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv(
+        "DATABASE_URL", f"sqlite+pysqlite:///{tmp_path / 'legacy-correction.db'}"
+    )
+    monkeypatch.setenv("ALLOW_INSECURE_IDENTITY_HEADERS", "true")
+    monkeypatch.setenv("ENVIRONMENT", "test")
+    get_settings.cache_clear()
+    app = create_app()
+    Base.metadata.create_all(app.state.engine)
+    with app.state.session_factory() as session:
+        session.add(Study(id="study-a", tenant_id="tenant-a", name="Synthetic study"))
+        fact = Fact(
+            id="fact-a",
+            tenant_id="tenant-a",
+            study_id="study-a",
+            processing_attempt_id=None,
+            kind="population",
+            status="approved",
+        )
+        session.add(fact)
+        session.flush()
+        session.add(
+            FactVersion(
+                tenant_id="tenant-a",
+                fact_id=fact.id,
+                version=1,
+                value_json={"kind": "string", "value": "Synthetic adults"},
+                is_current=True,
+            )
+        )
+        session.commit()
+
+    response = TestClient(app).post(
+        "/api/facts/fact-a/review",
+        headers={"X-Tenant-ID": "tenant-a", "X-Actor-ID": "writer-a"},
+        json={
+            "action": "correct_and_approve",
+            "expected_version": 1,
+            "value": {"kind": "string", "value": "Corrected synthetic adults"},
+            "rationale": "Correct legacy seed",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"id": "fact-a", "status": "approved", "version": 2}
+    get_settings.cache_clear()
+
+
+@pytest.mark.parametrize(
+    (
+        "case",
+        "attempt_study_id",
+        "record_study_id",
+        "record_role",
+        "fact_current_version",
+        "version_number",
+    ),
+    [
+        ("cross-study-attempt", "study-b", "study-b", "synopsis", 1, 1),
+        ("wrong-study-synopsis", "study-a", "study-b", "synopsis", 1, 1),
+        ("wrong-role-synopsis", "study-a", "study-a", "template", 1, 1),
+        ("wrong-current-version", "study-a", "study-a", "synopsis", 2, 1),
+    ],
+)
+def test_review_queue_and_mutation_reject_non_exact_provenance(
+    tmp_path,
+    monkeypatch,
+    case: str,
+    attempt_study_id: str,
+    record_study_id: str,
+    record_role: str,
+    fact_current_version: int,
+    version_number: int,
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", f"sqlite+pysqlite:///{tmp_path / f'{case}.db'}")
+    monkeypatch.setenv("ALLOW_INSECURE_IDENTITY_HEADERS", "true")
+    monkeypatch.setenv("ENVIRONMENT", "test")
+    get_settings.cache_clear()
+    app = create_app()
+    Base.metadata.create_all(app.state.engine)
+    with app.state.session_factory() as session:
+        session.add_all(
+            [
+                Study(id="study-a", tenant_id="tenant-a", name="Fact study"),
+                Study(id="study-b", tenant_id="tenant-a", name="Other study"),
+            ]
+        )
+        record = FileRecord(
+            id="file-a",
+            tenant_id="tenant-a",
+            study_id=record_study_id,
+            role=record_role,
+        )
+        version = FileVersion(
+            id="version-a",
+            tenant_id="tenant-a",
+            file_record_id=record.id,
+            version=1,
+            display_filename="input.docx",
+            checksum_sha256="a" * 64,
+            size_bytes=10,
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            storage_key=f"tenant/{case}.docx",
+            status="succeeded",
+        )
+        evidence = SourceEvidence(
+            id="evidence-a",
+            tenant_id="tenant-a",
+            file_version_id=version.id,
+            ordinal=0,
+            location_json={"kind": "paragraph", "index": 0},
+            text="Synthetic adults",
+            text_sha256="b" * 64,
+        )
+        attempt = ProcessingAttempt(
+            id="attempt-a",
+            tenant_id="tenant-a",
+            study_id=attempt_study_id,
+            synopsis_version_id=version.id,
+            extractor_name="local-rules",
+            extractor_version="local-rules-v1",
+            status="succeeded",
+            findings_json=[],
+        )
+        fact = Fact(
+            id="fact-a",
+            tenant_id="tenant-a",
+            study_id="study-a",
+            processing_attempt_id=attempt.id,
+            kind="population",
+            status="candidate",
+            current_version=fact_current_version,
+        )
+        session.add_all([record, version, evidence, attempt, fact])
+        session.flush()
+        session.add(
+            FactVersion(
+                tenant_id="tenant-a",
+                fact_id=fact.id,
+                version=version_number,
+                value_json={"kind": "string", "value": "Synthetic adults"},
+                source_evidence_id=evidence.id,
+                source_evidence_version_id=version.id,
+                is_current=True,
+            )
+        )
+        session.commit()
+
+    client = TestClient(app)
+    headers = {"X-Tenant-ID": "tenant-a", "X-Actor-ID": "writer-a"}
+    queue = client.get("/api/studies/study-a/fact-review", headers=headers)
+    mutation = client.post(
+        "/api/facts/fact-a/review",
+        headers=headers,
+        json={"action": "approve", "expected_version": fact_current_version},
+    )
+
+    assert queue.status_code == 200
+    assert len(queue.json()["items"]) == 1
+    assert queue.json()["items"][0]["evidence_valid"] is False
+    assert queue.json()["items"][0]["source_evidence"] is None
+    assert mutation.status_code == 409
+    assert mutation.json() == {"detail": {"code": "EXACT_EVIDENCE_UNAVAILABLE"}}
+    get_settings.cache_clear()
+
+
 def test_review_queue_keeps_candidate_without_current_version_visible_and_blocked(
     tmp_path, monkeypatch
 ) -> None:

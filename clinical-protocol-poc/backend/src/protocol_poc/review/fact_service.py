@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from protocol_poc.audit.service import AuditService
 from protocol_poc.review.conflicts import FactConflict
 from protocol_poc.review.impact_service import ImpactService
-from protocol_poc.files.models import SourceEvidence
+from protocol_poc.files.models import FileRecord, FileVersion, SourceEvidence
 from protocol_poc.studies.models import Fact, FactVersion, ProcessingAttempt
 from protocol_poc.studies.service import StudyService
 from protocol_poc.tenancy import TenantContext, require_tenant_context
@@ -64,20 +64,38 @@ class FactReviewService:
         StudyService(self.session).require_active(context, fact.study_id)
         return fact
 
-    def _fact(self, ctx: TenantContext, fact_id: str, expected_version: int) -> Fact:
+    def _fact(
+        self,
+        ctx: TenantContext,
+        fact_id: str,
+        expected_version: int,
+        *,
+        allow_legacy_approved_correction: bool = False,
+    ) -> Fact:
         context = require_tenant_context(ctx)
         fact = self.require_active_fact(context, fact_id)
         if fact.current_version != expected_version:
             raise VersionConflict(f"expected version {expected_version}, found {fact.current_version}")
-        if not self._evidence_is_exact(context, fact):
+        legacy_correction = bool(
+            allow_legacy_approved_correction
+            and fact.processing_attempt_id is None
+            and fact.status == "approved"
+        )
+        if not legacy_correction and not self._evidence_is_exact(context, fact):
             raise EvidenceUnavailable("exact source evidence could not be verified")
         return fact
 
     def _evidence_is_exact(self, ctx: TenantContext, fact: Fact) -> bool:
         if fact.processing_attempt_id is None:
-            return fact.status == "approved"
+            return False
         row = self.session.execute(
-            select(FactVersion, SourceEvidence, ProcessingAttempt)
+            select(
+                FactVersion,
+                SourceEvidence,
+                ProcessingAttempt,
+                FileVersion,
+                FileRecord,
+            )
             .outerjoin(
                 SourceEvidence,
                 (SourceEvidence.id == FactVersion.source_evidence_id)
@@ -88,6 +106,16 @@ class FactReviewService:
                 (ProcessingAttempt.id == fact.processing_attempt_id)
                 & (ProcessingAttempt.tenant_id == FactVersion.tenant_id),
             )
+            .outerjoin(
+                FileVersion,
+                (FileVersion.id == ProcessingAttempt.synopsis_version_id)
+                & (FileVersion.tenant_id == ProcessingAttempt.tenant_id),
+            )
+            .outerjoin(
+                FileRecord,
+                (FileRecord.id == FileVersion.file_record_id)
+                & (FileRecord.tenant_id == FileVersion.tenant_id),
+            )
             .where(
                 FactVersion.fact_id == fact.id,
                 FactVersion.tenant_id == ctx.tenant_id,
@@ -96,12 +124,46 @@ class FactReviewService:
         ).one_or_none()
         if row is None:
             return False
-        version, evidence, attempt = row
+        return self._provenance_is_exact(fact, *row)
+
+    @staticmethod
+    def _provenance_is_exact(
+        fact: Fact,
+        version: FactVersion,
+        evidence: SourceEvidence | None,
+        attempt: ProcessingAttempt | None,
+        synopsis_version: FileVersion | None,
+        synopsis_record: FileRecord | None,
+    ) -> bool:
         return bool(
-            evidence is not None
+            attempt is not None
+            and evidence is not None
+            and synopsis_version is not None
+            and synopsis_record is not None
+            and attempt.study_id == fact.study_id
             and evidence.file_version_id == attempt.synopsis_version_id
             and version.source_evidence_version_id == attempt.synopsis_version_id
+            and version.version == fact.current_version
+            and synopsis_version.id == attempt.synopsis_version_id
+            and synopsis_record.study_id == fact.study_id
+            and synopsis_record.role == "synopsis"
         )
+
+    @staticmethod
+    def _require_transition(fact: Fact, action: str) -> None:
+        valid = {
+            "approve": fact.status == "candidate" and not fact.deferred,
+            "correct_and_approve": fact.status in {"candidate", "approved"}
+            and not fact.deferred,
+            "reject": fact.status == "candidate" and not fact.deferred,
+            "defer": fact.status == "candidate" and not fact.deferred,
+            "resume": fact.status == "candidate" and fact.deferred,
+            "resolve_conflict": fact.status == "conflicted" and not fact.deferred,
+        }
+        if not valid[action]:
+            raise FactReviewError(
+                f"{action} cannot transition fact from status {fact.status}"
+            )
 
     @staticmethod
     def _require_confirmation(fact: Fact, explicitly_confirmed: bool) -> None:
@@ -112,6 +174,7 @@ class FactReviewService:
         fact = self._fact(ctx, fact_id, expected_version)
         if fact.status == "conflicted":
             raise UnresolvedConflict("conflicting facts must be resolved before approval")
+        self._require_transition(fact, "approve")
         self._require_confirmation(fact, explicitly_confirmed)
         fact.status = "approved"
         fact.deferred = False
@@ -119,9 +182,15 @@ class FactReviewService:
         return fact
 
     def correct_and_approve(self, ctx: TenantContext, fact_id: str, *, expected_version: int, value_json: dict[str, Any], rationale: str, explicitly_confirmed: bool) -> Fact:
-        fact = self._fact(ctx, fact_id, expected_version)
+        fact = self._fact(
+            ctx,
+            fact_id,
+            expected_version,
+            allow_legacy_approved_correction=True,
+        )
         if fact.status == "conflicted":
             raise UnresolvedConflict("conflicting facts must be resolved before correction")
+        self._require_transition(fact, "correct_and_approve")
         self._require_confirmation(fact, explicitly_confirmed)
         current = self.session.scalar(select(FactVersion).where(FactVersion.fact_id == fact.id, FactVersion.tenant_id == ctx.tenant_id, FactVersion.is_current.is_(True)))
         if current is None:
@@ -138,6 +207,7 @@ class FactReviewService:
 
     def reject(self, ctx: TenantContext, fact_id: str, *, expected_version: int, rationale: str) -> Fact:
         fact = self._fact(ctx, fact_id, expected_version)
+        self._require_transition(fact, "reject")
         fact.status = "rejected"
         fact.deferred = False
         self.audit.append(ctx, "fact.rejected", "fact", fact.id, {"version": fact.current_version, "rationale": rationale})
@@ -145,12 +215,14 @@ class FactReviewService:
 
     def defer(self, ctx: TenantContext, fact_id: str, *, expected_version: int, rationale: str) -> Fact:
         fact = self._fact(ctx, fact_id, expected_version)
+        self._require_transition(fact, "defer")
         fact.deferred = True
         self.audit.append(ctx, "fact.deferred", "fact", fact.id, {"version": fact.current_version, "rationale": rationale})
         return fact
 
     def resume(self, ctx: TenantContext, fact_id: str, *, expected_version: int, rationale: str) -> Fact:
         fact = self._fact(ctx, fact_id, expected_version)
+        self._require_transition(fact, "resume")
         fact.deferred = False
         self.audit.append(
             ctx,
@@ -163,6 +235,7 @@ class FactReviewService:
 
     def resolve_conflict(self, ctx: TenantContext, fact_id: str, *, expected_version: int, resolution: str) -> Fact:
         fact = self._fact(ctx, fact_id, expected_version)
+        self._require_transition(fact, "resolve_conflict")
         if not resolution.strip():
             raise FactReviewError("conflict resolution rationale is required")
         conflicts = list(self.session.scalars(select(FactConflict).where(FactConflict.fact_id == fact.id, FactConflict.tenant_id == ctx.tenant_id, FactConflict.status == "open")))
@@ -195,7 +268,13 @@ class FactReviewService:
             return []
         fact_ids = [fact.id for fact in facts]
         statement = (
-            select(FactVersion, SourceEvidence, ProcessingAttempt)
+            select(
+                FactVersion,
+                SourceEvidence,
+                ProcessingAttempt,
+                FileVersion,
+                FileRecord,
+            )
             .outerjoin(
                 SourceEvidence,
                 (SourceEvidence.id == FactVersion.source_evidence_id)
@@ -210,9 +289,23 @@ class FactReviewService:
                 (ProcessingAttempt.id == Fact.processing_attempt_id)
                 & (ProcessingAttempt.tenant_id == Fact.tenant_id),
             )
+            .outerjoin(
+                FileVersion,
+                (FileVersion.id == ProcessingAttempt.synopsis_version_id)
+                & (FileVersion.tenant_id == ProcessingAttempt.tenant_id),
+            )
+            .outerjoin(
+                FileRecord,
+                (FileRecord.id == FileVersion.file_record_id)
+                & (FileRecord.tenant_id == FileVersion.tenant_id),
+            )
             .where(FactVersion.fact_id.in_(fact_ids), FactVersion.is_current.is_(True))
         )
-        by_fact = {version.fact_id: (version, evidence, attempt) for version, evidence, attempt in self.session.execute(statement)}
+        by_fact = {
+            version.fact_id: (version, evidence, attempt, synopsis_version, synopsis_record)
+            for version, evidence, attempt, synopsis_version, synopsis_record
+            in self.session.execute(statement)
+        }
         items: list[FactReviewItem] = []
         for fact in facts:
             row = by_fact.get(fact.id)
@@ -232,12 +325,14 @@ class FactReviewService:
                     )
                 )
                 continue
-            version, evidence, attempt = row
-            evidence_valid = bool(
-                attempt is not None
-                and evidence is not None
-                and evidence.file_version_id == attempt.synopsis_version_id
-                and version.source_evidence_version_id == attempt.synopsis_version_id
+            version, evidence, attempt, synopsis_version, synopsis_record = row
+            evidence_valid = self._provenance_is_exact(
+                fact,
+                version,
+                evidence,
+                attempt,
+                synopsis_version,
+                synopsis_record,
             )
             embedded_confidence = version.value_json.get("confidence")
             confidence = version.confidence
