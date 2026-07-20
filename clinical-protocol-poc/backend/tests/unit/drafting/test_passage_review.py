@@ -1,5 +1,6 @@
 import pytest
 from sqlalchemy import create_engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from protocol_poc.db import Base
@@ -39,3 +40,27 @@ def test_reject_requires_current_passage_version() -> None:
 
         with pytest.raises(PassageVersionConflict):
             PassageReviewService(session).reject(TenantContext("tenant-a", "writer-a"), passage.id, expected_version=1, rationale="Synthetic rejection")
+
+
+def test_database_rejects_multiple_current_passage_versions() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(Study(id="study-a", tenant_id="tenant-a", name="Synthetic study"))
+        session.add(Passage(
+            id="passage-a", tenant_id="tenant-a", study_id="study-a",
+            section="study_design", status="draft", current_version=2,
+        ))
+        session.add_all([
+            PassageVersion(
+                id="version-a", tenant_id="tenant-a", passage_id="passage-a", version=1,
+                text="Synthetic version one.", placeholders=[], is_current=True,
+            ),
+            PassageVersion(
+                id="version-b", tenant_id="tenant-a", passage_id="passage-a", version=2,
+                text="Synthetic version two.", placeholders=[], is_current=True,
+            ),
+        ])
+
+        with pytest.raises(IntegrityError):
+            session.commit()

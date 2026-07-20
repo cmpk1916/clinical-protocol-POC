@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { protocolExportApi } from "../../lib/api";
 import type { ExportApi, ExportCommand, ExportState } from "../../lib/types";
@@ -18,6 +18,9 @@ export function ExportPanel({
   api?: ExportApi;
 }>) {
   const [exportState, setExportState] = useState(state);
+  useEffect(() => {
+    setExportState(state);
+  }, [state, exportCommand, studyId]);
   const blocked = exportState.blockers.length > 0 || exportCommand === null;
 
   async function createExport() {

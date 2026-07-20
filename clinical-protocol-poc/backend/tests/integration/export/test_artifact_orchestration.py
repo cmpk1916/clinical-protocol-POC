@@ -1,14 +1,14 @@
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 
 from protocol_poc.db import Base
 from protocol_poc.export.artifact_service import EXPECTED_FILENAMES, ExportArtifactRepository
 from protocol_poc.export.orchestration import ExportCommand, ExportOrchestrator
 from protocol_poc.export.service import ExportDenied
-from protocol_poc.export.models import ExportArtifactRecord, ExportSnapshot
+from protocol_poc.export.models import ExportArtifactRecord, ExportSnapshot, SnapshotPassage
 from protocol_poc.files.models import FileRecord, FileVersion, StudyInput
 from protocol_poc.files.service import LocalFileStorage
 from protocol_poc.drafting.models import Passage, PassageVersion, SupportLink
@@ -194,6 +194,13 @@ def test_orchestrator_creates_exact_artifact_set_from_validated_snapshot(tmp_pat
         assert [item.name for item in result.artifacts] == list(EXPECTED_FILENAMES)
         assert {item.snapshot_id for item in result.artifacts} == {result.snapshot_id}
         assert len(session.scalars(select(ExportArtifactRecord)).all()) == 3
+        snapshot_passages = list(session.scalars(
+            select(SnapshotPassage).where(SnapshotPassage.snapshot_id == result.snapshot_id)
+        ))
+        assert len(snapshot_passages) == 4
+        assert {item.section for item in snapshot_passages} == {
+            "synopsis", "objectives_endpoints", "study_design", "eligibility",
+        }
 
 
 @pytest.mark.parametrize(
@@ -269,3 +276,57 @@ def test_orchestrator_rechecks_current_workspace_authority_before_export(
         assert expected in captured.value.codes
         session.rollback()
         assert session.scalars(select(ExportArtifactRecord)).all() == []
+
+
+def test_orchestrator_rolls_back_when_authorized_template_storage_is_missing(
+    tmp_path: Path,
+) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    storage = LocalFileStorage(tmp_path)
+    with Session(engine) as session:
+        command = seed_eligible_study(session, storage)
+        storage.delete("tenants/template/source.docx")
+
+        with pytest.raises(OSError, match="template storage object is missing"):
+            ExportOrchestrator(session, storage, "renderer-v1").create(
+                TenantContext("tenant-a", "writer"), "study-a", command
+            )
+
+        session.rollback()
+        assert session.scalars(select(ExportSnapshot)).all() == []
+        assert session.scalars(select(ExportArtifactRecord)).all() == []
+        assert not (tmp_path / "tenants" / "tenant-a" / "exports").exists()
+
+
+@pytest.mark.parametrize("change", ["missing_current", "version_mismatch", "duplicate_current"])
+def test_orchestrator_rejects_nonexact_current_passage_versions(
+    tmp_path: Path, change: str
+) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    storage = LocalFileStorage(tmp_path)
+    with Session(engine) as session:
+        command = seed_eligible_study(session, storage)
+        passage = session.get(Passage, "passage-eligibility")
+        assert passage is not None
+        current = session.scalar(select(PassageVersion).where(PassageVersion.passage_id == passage.id))
+        assert current is not None
+        if change == "missing_current":
+            current.is_current = False
+        elif change == "version_mismatch":
+            passage.current_version = 2
+        else:
+            session.execute(text("DROP INDEX uq_passage_version_current"))
+            session.add(PassageVersion(
+                tenant_id="tenant-a", passage_id=passage.id, version=2,
+                text="Synthetic duplicate current passage.", placeholders=[], is_current=True,
+            ))
+        session.commit()
+
+        with pytest.raises(ExportDenied) as captured:
+            ExportOrchestrator(session, storage, "renderer-v1").create(
+                TenantContext("tenant-a", "writer"), "study-a", command
+            )
+
+        assert "PASSAGE_REVIEW_INCOMPLETE" in captured.value.codes

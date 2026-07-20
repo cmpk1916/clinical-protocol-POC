@@ -102,6 +102,13 @@ class ExportArtifactRepository:
             raise OSError("export artifact integrity check failed")
         return record, content
 
+    def delete_storage_keys(self, storage_keys: tuple[str, ...]) -> None:
+        for storage_key in reversed(storage_keys):
+            try:
+                self._storage.delete(storage_key)
+            except Exception:
+                pass
+
     @staticmethod
     def _descriptor(record: ExportArtifactRecord) -> ArtifactDescriptor:
         return ArtifactDescriptor(

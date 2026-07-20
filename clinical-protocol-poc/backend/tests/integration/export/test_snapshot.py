@@ -1,14 +1,14 @@
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, update
 from sqlalchemy.orm import Session
 
 from protocol_poc.db import Base
-from protocol_poc.export.models import ExportSnapshot, ImmutableSnapshotError
+from protocol_poc.export.models import ExportSnapshot, ImmutableSnapshotError, SnapshotFact
 from protocol_poc.export.service import ExportDenied, ExportService
 from protocol_poc.drafting.models import Passage, PassageVersion
 from protocol_poc.files.models import FileRecord, FileVersion, StudyInput
 from protocol_poc.quality.models import QualityBlocker, QualityScorecard
-from protocol_poc.studies.models import Fact, ProcessingAttempt, Study
+from protocol_poc.studies.models import Fact, FactVersion, ProcessingAttempt, Study
 from protocol_poc.tenancy import TenantContext
 
 
@@ -47,6 +47,10 @@ def seed_current_export_state(session: Session) -> None:
     ))
     session.add(Fact(
         id="fact-a", tenant_id="tenant-a", study_id="study-a", kind="dose", status="approved"
+    ))
+    session.add(FactVersion(
+        id="fact-a-v1", tenant_id="tenant-a", fact_id="fact-a", version=1,
+        value_json={"value": "10", "unit": "mg"}, is_current=True,
     ))
     for section in ("synopsis", "objectives_endpoints", "study_design", "eligibility"):
         passage = Passage(
@@ -90,3 +94,74 @@ def test_snapshot_is_immutable_and_version_locked() -> None:
         snapshot.renderer_version = "tampered"
         with pytest.raises(ImmutableSnapshotError):
             session.commit()
+
+
+def test_authority_locks_prevent_a_second_session_from_mutating_snapshot_facts(
+    tmp_path,
+) -> None:
+    import threading
+    import time
+
+    class BlockingQuality(FixedQuality):
+        def __init__(self) -> None:
+            super().__init__()
+            self.authority_ready = threading.Event()
+            self.release_export = threading.Event()
+
+        def calculate(self, ctx, study_id):
+            self.authority_ready.set()
+            assert self.release_export.wait(timeout=5)
+            return super().calculate(ctx, study_id)
+
+    engine = create_engine(
+        f"sqlite+pysqlite:///{tmp_path / 'concurrency.db'}",
+        connect_args={"check_same_thread": False, "timeout": 2},
+    )
+    Base.metadata.create_all(engine)
+    with Session(engine) as setup:
+        seed_current_export_state(setup)
+        setup.commit()
+
+    quality = BlockingQuality()
+    export_complete = threading.Event()
+    update_started = threading.Event()
+    update_complete = threading.Event()
+    outcome: dict[str, object] = {}
+
+    def export_in_first_session() -> None:
+        with Session(engine) as first:
+            snapshot = ExportService(first, quality).create_snapshot(
+                TenantContext("tenant-a", "writer-a"), "study-a", expected_study_version=1,
+                template_version_id="template-v1", template_hash="b" * 64,
+            )
+            first.commit()
+            outcome["snapshot_id"] = snapshot.id
+            export_complete.set()
+
+    def mutate_in_second_session() -> None:
+        with Session(engine) as second:
+            update_started.set()
+            second.execute(update(FactVersion).where(FactVersion.id == "fact-a-v1").values(
+                value_json={"value": "20", "unit": "mg"}
+            ))
+            second.commit()
+            update_complete.set()
+
+    first = threading.Thread(target=export_in_first_session)
+    first.start()
+    assert quality.authority_ready.wait(timeout=5)
+    second = threading.Thread(target=mutate_in_second_session)
+    second.start()
+    assert update_started.wait(timeout=5)
+    time.sleep(0.1)
+    assert not update_complete.is_set()
+    quality.release_export.set()
+    first.join(timeout=5)
+    second.join(timeout=5)
+    assert export_complete.is_set() and update_complete.is_set()
+    with Session(engine) as verify:
+        fact = verify.scalar(select(SnapshotFact).where(
+            SnapshotFact.snapshot_id == outcome["snapshot_id"]
+        ))
+        assert fact is not None
+        assert fact.value_json == {"value": "10", "unit": "mg"}

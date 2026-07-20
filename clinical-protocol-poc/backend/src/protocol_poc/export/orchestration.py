@@ -6,11 +6,10 @@ from sqlalchemy.orm import Session
 
 from protocol_poc.drafting.models import Claim, PassageVersion, SupportLink
 from protocol_poc.export.artifact_service import ArtifactDescriptor, ExportArtifactRepository
-from protocol_poc.export.models import ExportSnapshot, SnapshotPassage
-from protocol_poc.export.service import ExportDenied, ExportService
-from protocol_poc.files.models import FileRecord, FileVersion, SourceEvidence
+from protocol_poc.export.models import ExportArtifactRecord, ExportSnapshot, SnapshotPassage
+from protocol_poc.export.service import ExportService
+from protocol_poc.files.models import SourceEvidence
 from protocol_poc.files.service import FileStorage
-from protocol_poc.quality.service import QualityService
 from protocol_poc.rendering.artifact_service import ArtifactService
 from protocol_poc.rendering.docx_renderer import RenderSnapshot
 from protocol_poc.studies.models import FactVersion
@@ -28,6 +27,7 @@ class ExportCommand:
 class ExportResult:
     snapshot_id: str
     artifacts: tuple[ArtifactDescriptor, ...]
+    storage_keys: tuple[str, ...] = ()
 
 
 class ExportOrchestrator:
@@ -48,55 +48,31 @@ class ExportOrchestrator:
         command: ExportCommand,
     ) -> ExportResult:
         context = require_tenant_context(ctx)
-        template_version = self._template_version(
-            context, study_id, command.template_version_id
-        )
-        if template_version is None:
-            raise ExportDenied(("TEMPLATE_VERSION_INVALID",))
-        if template_version.checksum_sha256 != command.template_hash:
-            raise ExportDenied(("TEMPLATE_HASH_MISMATCH",))
-        template = self._storage.get(template_version.storage_key)
-        if template is None:
-            raise ExportDenied(("TEMPLATE_VERSION_INVALID",))
-
-        scorecard = QualityService(self._session).calculate(context, study_id)
-        snapshot = ExportService(self._session).create_snapshot(
+        build = ExportService(self._session).create_snapshot_build(
             context,
             study_id,
             expected_study_version=command.expected_study_version,
-            template_version_id=template_version.id,
-            template_hash=template_version.checksum_sha256,
+            template_version_id=command.template_version_id,
+            template_hash=command.template_hash,
             renderer_version=self._renderer_version,
         )
-        render_snapshot = self._render_snapshot(context, snapshot)
+        template = self._storage.get(build.template_version.storage_key)
+        if template is None:
+            raise OSError("template storage object is missing")
+        render_snapshot = self._render_snapshot(context, build.snapshot)
         rendered = ArtifactService(self._renderer_version).create(
-            render_snapshot, scorecard, template
+            render_snapshot, build.scorecard, template
         )
         descriptors = ExportArtifactRepository(self._session, self._storage).persist(
-            context, snapshot, rendered
+            context, build.snapshot, rendered
         )
-        return ExportResult(snapshot.id, descriptors)
-
-    def _template_version(
-        self,
-        ctx: TenantContext,
-        study_id: str,
-        version_id: str,
-    ) -> FileVersion | None:
-        return self._session.scalar(
-            select(FileVersion)
-            .join(
-                FileRecord,
-                (FileRecord.id == FileVersion.file_record_id)
-                & (FileRecord.tenant_id == FileVersion.tenant_id),
+        storage_keys = tuple(self._session.scalars(
+            select(ExportArtifactRecord.storage_key).where(
+                ExportArtifactRecord.tenant_id == context.tenant_id,
+                ExportArtifactRecord.id.in_([item.id for item in descriptors]),
             )
-            .where(
-                FileVersion.id == version_id,
-                FileVersion.tenant_id == ctx.tenant_id,
-                FileRecord.study_id == study_id,
-                FileRecord.role == "template",
-            )
-        )
+        ))
+        return ExportResult(build.snapshot.id, descriptors, storage_keys)
 
     def _render_snapshot(
         self,

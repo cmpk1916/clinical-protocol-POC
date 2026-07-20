@@ -84,6 +84,32 @@ describe("ExportPanel", () => {
     assert.equal(screen.queryByRole("link", { name: "Download protocol.docx" }), null);
   });
 
+  it("adopts refreshed authority state and clears prior artifacts on rerender", () => {
+    const view = render(
+      <ExportPanel
+        studyId="study-1"
+        exportCommand={exportCommand}
+        state={{
+          blockers: [], snapshotId: "snapshot-old",
+          artifacts: [{ id: "old", name: "protocol.docx", mediaType: "application/docx", sha256: "old", snapshotId: "snapshot-old", downloadUrl: "/old" }],
+        }}
+      />,
+    );
+    assert.ok(screen.getByRole("link", { name: "Download protocol.docx" }));
+
+    view.rerender(
+      <ExportPanel
+        studyId="study-2"
+        exportCommand={null}
+        state={{ blockers: ["STUDY_ARCHIVED"], snapshotId: null, artifacts: [] }}
+      />,
+    );
+
+    assert.ok(screen.getByText("STUDY_ARCHIVED"));
+    assert.equal(screen.queryByRole("link", { name: "Download protocol.docx" }), null);
+    assert.equal(screen.getByRole("button", { name: "Create export" }).hasAttribute("disabled"), true);
+  });
+
   it("posts the workspace command through the local proxy and rewrites artifact downloads", async () => {
     const originalFetch = globalThis.fetch;
     let request: { url: string; init?: RequestInit } | null = null;

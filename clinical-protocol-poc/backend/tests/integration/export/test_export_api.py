@@ -2,7 +2,7 @@ from hashlib import sha256
 from pathlib import Path
 
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -106,4 +106,84 @@ def test_export_api_returns_descriptors_and_downloads_exact_bytes(
         headers={"X-Tenant-ID": "tenant-b", "X-Actor-ID": "writer"},
     )
     assert hidden.status_code == 404
+    session.close()
+
+
+def test_export_api_compensates_written_artifacts_when_commit_fails(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False}, poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session = Session(engine)
+    storage = LocalFileStorage(tmp_path)
+    storage_key = "tenants/tenant-a/exports/snapshot-a/artifact-a/protocol.docx"
+    content = b"synthetic artifact"
+
+    import protocol_poc.export.routes as routes
+
+    settings = Settings(
+        local_storage_path=str(tmp_path), allow_insecure_identity_headers=True,
+        environment="test",
+    )
+    monkeypatch.setattr(routes, "get_settings", lambda: settings)  # type: ignore[attr-defined]
+
+    class FakeOrchestrator:
+        def __init__(self, *args: object) -> None:
+            pass
+
+        def create(self, *args: object) -> ExportResult:
+            snapshot = ExportSnapshot(
+                id="snapshot-a", tenant_id="tenant-a", study_id="study-a", study_version=1,
+                renderer_version="renderer-v1",
+            )
+            session.add(snapshot)
+            session.flush()
+            storage.put(storage_key, content)
+            session.add(ExportArtifactRecord(
+                id="artifact-a", tenant_id="tenant-a", snapshot_id=snapshot.id,
+                filename="protocol.docx",
+                media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                renderer_version="renderer-v1", size_bytes=len(content),
+                sha256_hex=sha256(content).hexdigest(), storage_key=storage_key,
+            ))
+            return ExportResult(
+                snapshot.id,
+                (ArtifactDescriptor(
+                    "artifact-a", "protocol.docx",
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    sha256(content).hexdigest(), snapshot.id,
+                    "/api/export-artifacts/artifact-a",
+                ),),
+                (storage_key,),
+            )
+
+    def fail_commit() -> None:
+        from sqlalchemy.exc import OperationalError
+
+        raise OperationalError("COMMIT", {}, RuntimeError("synthetic commit failure"))
+
+    monkeypatch.setattr(routes, "ExportOrchestrator", FakeOrchestrator)  # type: ignore[attr-defined]
+    monkeypatch.setattr(session, "commit", fail_commit)
+    app = create_app()
+    app.dependency_overrides[database_session] = lambda: session
+    response = TestClient(app).post(
+        "/api/studies/study-a/exports",
+        headers=HEADERS,
+        json={
+            "expectedStudyVersion": 1,
+            "templateVersionId": "template-v1",
+            "templateHash": "a" * 64,
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "detail": {"code": "EXPORT_FAILED", "blockers": ["EXPORT_FAILED"]}
+    }
+    assert storage.get(storage_key) is None
+    assert session.scalars(select(ExportSnapshot)).all() == []
+    assert session.scalars(select(ExportArtifactRecord)).all() == []
     session.close()

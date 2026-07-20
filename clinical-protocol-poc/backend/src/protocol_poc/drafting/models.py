@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKeyConstraint, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKeyConstraint, Index, Integer, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from protocol_poc.common.ids import new_id
@@ -36,6 +36,10 @@ class PassageVersion(Base):
         UniqueConstraint("passage_id", "version", name="uq_passage_version_number"),
         UniqueConstraint("id", "tenant_id", name="uq_passage_version_id_tenant"),
         ForeignKeyConstraint(["passage_id", "tenant_id"], ["passages.id", "passages.tenant_id"], name="fk_passage_version_passage_tenant"),
+        Index(
+            "uq_passage_version_current", "passage_id", unique=True,
+            sqlite_where=text("is_current = 1"), postgresql_where=text("is_current"),
+        ),
     )
     id: Mapped[str] = mapped_column(String(128), primary_key=True, default=new_id)
     tenant_id: Mapped[str] = mapped_column(String(128), nullable=False)

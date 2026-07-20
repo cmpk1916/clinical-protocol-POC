@@ -5,6 +5,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from protocol_poc.config import get_settings
@@ -53,8 +54,11 @@ class ExportResponse(BaseModel):
 
 
 def database_session(request: Request) -> Iterator[Session]:
-    with request.app.state.session_factory.begin() as session:
+    session = request.app.state.session_factory()
+    try:
         yield session
+    finally:
+        session.close()
 
 
 def _identity(request: Request) -> TenantContext:
@@ -88,6 +92,7 @@ def export(
     parsed = ExportRequest.model_validate(command)
     settings = get_settings()
     storage = LocalFileStorage(Path(settings.local_storage_path))
+    result = None
     try:
         result = ExportOrchestrator(session, storage, RENDERER_VERSION).create(
             ctx,
@@ -98,13 +103,17 @@ def export(
                 parsed.template_hash,
             ),
         )
+        session.commit()
     except ExportDenied as error:
+        session.commit()
         raise HTTPException(
             status_code=409,
             detail={"code": "EXPORT_BLOCKED", "blockers": error.codes},
         ) from error
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, SQLAlchemyError) as error:
         session.rollback()
+        if result is not None:
+            ExportArtifactRepository(session, storage).delete_storage_keys(result.storage_keys)
         raise HTTPException(
             status_code=409,
             detail={"code": "EXPORT_FAILED", "blockers": ["EXPORT_FAILED"]},

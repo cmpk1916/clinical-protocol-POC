@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import Protocol
 
 from sqlalchemy import select
@@ -24,38 +25,84 @@ class ExportDenied(RuntimeError):
         super().__init__(f"export denied: {', '.join(codes)}")
 
 
+@dataclass(frozen=True)
+class ExportSnapshotBuild:
+    snapshot: ExportSnapshot
+    template_version: FileVersion
+    scorecard: QualityScorecard
+
+
 class ExportService:
+    _REQUIRED_SECTIONS = frozenset({
+        "synopsis", "objectives_endpoints", "study_design", "eligibility",
+    })
+
     def __init__(self, session: Session, quality_service: QualityCalculator | None = None) -> None:
         self.session = session
         self.quality = quality_service or QualityService(session)
         self.audit = AuditService(session)
 
-    def create_snapshot(self, ctx: TenantContext, study_id: str, *, expected_study_version: int, template_version_id: str, template_hash: str, renderer_version: str = "pending") -> ExportSnapshot:
-        study = self.session.scalar(select(Study).where(Study.id == study_id, Study.tenant_id == ctx.tenant_id).with_for_update())
+    def create_snapshot(
+        self,
+        ctx: TenantContext,
+        study_id: str,
+        *,
+        expected_study_version: int,
+        template_version_id: str,
+        template_hash: str,
+        renderer_version: str = "pending",
+    ) -> ExportSnapshot:
+        return self.create_snapshot_build(
+            ctx,
+            study_id,
+            expected_study_version=expected_study_version,
+            template_version_id=template_version_id,
+            template_hash=template_hash,
+            renderer_version=renderer_version,
+        ).snapshot
+
+    def create_snapshot_build(
+        self,
+        ctx: TenantContext,
+        study_id: str,
+        *,
+        expected_study_version: int,
+        template_version_id: str,
+        template_hash: str,
+        renderer_version: str,
+    ) -> ExportSnapshotBuild:
+        if self.session.get_bind().dialect.name == "sqlite":
+            self.session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+        study = self.session.scalar(
+            select(Study)
+            .where(Study.id == study_id, Study.tenant_id == ctx.tenant_id)
+            .with_for_update()
+        )
         state = ExportState()
         if study is None or study.version != expected_study_version:
             state.add_blocker("STUDY_VERSION_CHANGED")
         elif study.lifecycle != "active":
             state.add_blocker("STUDY_ARCHIVED")
-        if study is not None:
-            self._check_current_workspace_authority(
-                ctx,
-                study_id,
-                template_version_id,
-                template_hash,
-                state,
-            )
+
+        template, facts, passages = self._materialize_authority(
+            ctx, study_id, template_version_id, template_hash, state
+        )
         try:
-            card = self.quality.calculate(ctx, study_id)
-            for blocker in card.blockers:
+            scorecard = self.quality.calculate(ctx, study_id)
+            for blocker in scorecard.blockers:
                 state.add_quality_blocker(blocker.code)
         except Exception:
             state.validator_exception = True
+            scorecard = None
         decision = ExportGate().evaluate(state)
-        if not decision.allowed or study is None:
-            self.audit.append(ctx, "export.denied", "study", study_id, {"blocker_codes": list(decision.blocker_codes)})
+        if not decision.allowed or study is None or template is None or scorecard is None:
+            self.audit.append(
+                ctx, "export.denied", "study", study_id,
+                {"blocker_codes": list(decision.blocker_codes)},
+            )
             self.session.flush()
             raise ExportDenied(decision.blocker_codes)
+
         snapshot = ExportSnapshot(
             tenant_id=ctx.tenant_id,
             study_id=study_id,
@@ -64,23 +111,49 @@ class ExportService:
         )
         self.session.add(snapshot)
         self.session.flush()
-        facts = self.session.execute(select(Fact, FactVersion).join(FactVersion, (FactVersion.fact_id == Fact.id) & (FactVersion.tenant_id == Fact.tenant_id)).where(Fact.tenant_id == ctx.tenant_id, Fact.study_id == study_id, Fact.status == "approved", FactVersion.is_current.is_(True))).all()
-        self.session.add_all([SnapshotFact(tenant_id=ctx.tenant_id, snapshot_id=snapshot.id, source_fact_id=fact.id, source_version=version.version, value_json=version.value_json) for fact, version in facts])
-        passages = self.session.execute(select(Passage, PassageVersion).join(PassageVersion, (PassageVersion.passage_id == Passage.id) & (PassageVersion.tenant_id == Passage.tenant_id)).where(Passage.tenant_id == ctx.tenant_id, Passage.study_id == study_id, Passage.status == "accepted", PassageVersion.is_current.is_(True))).all()
-        self.session.add_all([SnapshotPassage(tenant_id=ctx.tenant_id, snapshot_id=snapshot.id, source_passage_id=passage.id, source_version=version.version, section=passage.section, text=version.text, review_state=passage.status) for passage, version in passages])
-        self.session.add(SnapshotTemplate(tenant_id=ctx.tenant_id, snapshot_id=snapshot.id, template_version_id=template_version_id, content_hash=template_hash))
-        self.audit.append(ctx, "export.snapshot_created", "export_snapshot", snapshot.id, {"study_id": study_id, "study_version": study.version})
+        self.session.add_all([
+            SnapshotFact(
+                tenant_id=ctx.tenant_id,
+                snapshot_id=snapshot.id,
+                source_fact_id=fact.id,
+                source_version=version.version,
+                value_json=version.value_json,
+            )
+            for fact, version in facts
+        ])
+        self.session.add_all([
+            SnapshotPassage(
+                tenant_id=ctx.tenant_id,
+                snapshot_id=snapshot.id,
+                source_passage_id=passage.id,
+                source_version=version.version,
+                section=passage.section,
+                text=version.text,
+                review_state=passage.status,
+            )
+            for passage, version in passages
+        ])
+        self.session.add(SnapshotTemplate(
+            tenant_id=ctx.tenant_id,
+            snapshot_id=snapshot.id,
+            template_version_id=template.id,
+            content_hash=template.checksum_sha256,
+        ))
+        self.audit.append(
+            ctx, "export.snapshot_created", "export_snapshot", snapshot.id,
+            {"study_id": study_id, "study_version": study.version},
+        )
         self.session.flush()
-        return snapshot
+        return ExportSnapshotBuild(snapshot, template, scorecard)
 
-    def _check_current_workspace_authority(
+    def _materialize_authority(
         self,
         ctx: TenantContext,
         study_id: str,
         template_version_id: str,
         template_hash: str,
         state: ExportState,
-    ) -> None:
+    ) -> tuple[FileVersion | None, list[tuple[Fact, FactVersion]], list[tuple[Passage, PassageVersion]]]:
         inputs = {
             item.role: item
             for item in self.session.scalars(
@@ -89,52 +162,124 @@ class ExportService:
                 .with_for_update()
             )
         }
-        template = inputs.get("template")
-        if template is None:
-            state.add_blocker("TEMPLATE_VERSION_INVALID")
-        elif template.conformance_status != "conforming":
-            state.add_blocker("TEMPLATE_NOT_CONFORMED")
-        elif template.current_file_version_id != template_version_id:
-            state.add_blocker("TEMPLATE_VERSION_INVALID")
-        else:
-            version = self.session.scalar(
-                select(FileVersion).where(
-                    FileVersion.id == template.current_file_version_id,
-                    FileVersion.tenant_id == ctx.tenant_id,
-                )
-            )
-            if version is None:
-                state.add_blocker("TEMPLATE_VERSION_INVALID")
-            elif version.checksum_sha256 != template_hash:
-                state.add_blocker("TEMPLATE_HASH_MISMATCH")
-
+        template = self._current_template(
+            ctx, inputs.get("template"), template_version_id, template_hash, state
+        )
         synopsis = inputs.get("synopsis")
-        if synopsis is None or self.session.scalar(
-            select(ProcessingAttempt.id).where(
+        attempts = list(self.session.scalars(
+            select(ProcessingAttempt).where(
                 ProcessingAttempt.tenant_id == ctx.tenant_id,
                 ProcessingAttempt.study_id == study_id,
-                ProcessingAttempt.synopsis_version_id == synopsis.current_file_version_id,
-                ProcessingAttempt.status == "succeeded",
-            )
-        ) is None:
+                ProcessingAttempt.synopsis_version_id == (
+                    synopsis.current_file_version_id if synopsis is not None else ""
+                ),
+            ).with_for_update()
+        ))
+        if synopsis is None or not any(item.status == "succeeded" for item in attempts):
             state.add_blocker("INPUT_PROCESSING_INCOMPLETE")
 
-        if self.session.scalar(
-            select(Fact.id).where(
+        facts = list(self.session.scalars(
+            select(Fact).where(
                 Fact.tenant_id == ctx.tenant_id,
                 Fact.study_id == study_id,
-                Fact.status.in_(("candidate", "conflicted")),
-            ).limit(1)
-        ) is not None:
+                Fact.status.in_(("approved", "candidate", "conflicted")),
+            ).with_for_update()
+        ))
+        if any(item.status in {"candidate", "conflicted"} for item in facts):
             state.add_blocker("FACT_REVIEW_INCOMPLETE")
+        fact_versions = list(self.session.scalars(
+            select(FactVersion).where(
+                FactVersion.tenant_id == ctx.tenant_id,
+                FactVersion.fact_id.in_([item.id for item in facts]),
+                FactVersion.is_current.is_(True),
+            ).with_for_update()
+        )) if facts else []
+        fact_pairs = self._current_fact_pairs(facts, fact_versions, state)
 
         passages = list(self.session.scalars(
-            select(Passage).where(Passage.tenant_id == ctx.tenant_id, Passage.study_id == study_id)
+            select(Passage).where(
+                Passage.tenant_id == ctx.tenant_id,
+                Passage.study_id == study_id,
+            ).with_for_update()
         ))
-        required_sections = {"synopsis", "objectives_endpoints", "study_design", "eligibility"}
+        versions = list(self.session.scalars(
+            select(PassageVersion).where(
+                PassageVersion.tenant_id == ctx.tenant_id,
+                PassageVersion.passage_id.in_([item.id for item in passages]),
+                PassageVersion.is_current.is_(True),
+            ).with_for_update()
+        )) if passages else []
+        passage_pairs = self._current_passage_pairs(passages, versions, state)
+        return template, fact_pairs, passage_pairs
+
+    def _current_template(
+        self,
+        ctx: TenantContext,
+        template: StudyInput | None,
+        template_version_id: str,
+        template_hash: str,
+        state: ExportState,
+    ) -> FileVersion | None:
+        if template is None:
+            state.add_blocker("TEMPLATE_VERSION_INVALID")
+            return None
+        if template.conformance_status != "conforming":
+            state.add_blocker("TEMPLATE_NOT_CONFORMED")
+            return None
+        if template.current_file_version_id != template_version_id:
+            state.add_blocker("TEMPLATE_VERSION_INVALID")
+            return None
+        version = self.session.scalar(
+            select(FileVersion).where(
+                FileVersion.id == template.current_file_version_id,
+                FileVersion.tenant_id == ctx.tenant_id,
+            ).with_for_update()
+        )
+        if version is None:
+            state.add_blocker("TEMPLATE_VERSION_INVALID")
+        elif version.checksum_sha256 != template_hash:
+            state.add_blocker("TEMPLATE_HASH_MISMATCH")
+        return version
+
+    @staticmethod
+    def _current_fact_pairs(
+        facts: list[Fact],
+        versions: list[FactVersion],
+        state: ExportState,
+    ) -> list[tuple[Fact, FactVersion]]:
+        by_fact: dict[str, list[FactVersion]] = {}
+        for version in versions:
+            by_fact.setdefault(version.fact_id, []).append(version)
+        pairs: list[tuple[Fact, FactVersion]] = []
+        for fact in facts:
+            current = by_fact.get(fact.id, [])
+            if len(current) != 1 or current[0].version != fact.current_version:
+                state.add_blocker("FACT_REVIEW_INCOMPLETE")
+            elif fact.status == "approved":
+                pairs.append((fact, current[0]))
+        return pairs
+
+    def _current_passage_pairs(
+        self,
+        passages: list[Passage],
+        versions: list[PassageVersion],
+        state: ExportState,
+    ) -> list[tuple[Passage, PassageVersion]]:
+        by_passage: dict[str, list[PassageVersion]] = {}
+        for version in versions:
+            by_passage.setdefault(version.passage_id, []).append(version)
         if (
-            len(passages) != len(required_sections)
-            or {passage.section for passage in passages} != required_sections
-            or any(passage.status != "accepted" for passage in passages)
+            len(passages) != len(self._REQUIRED_SECTIONS)
+            or {item.section for item in passages} != self._REQUIRED_SECTIONS
+            or any(item.status != "accepted" for item in passages)
         ):
             state.add_blocker("PASSAGE_REVIEW_INCOMPLETE")
+            return []
+        pairs: list[tuple[Passage, PassageVersion]] = []
+        for passage in passages:
+            current = by_passage.get(passage.id, [])
+            if len(current) != 1 or current[0].version != passage.current_version:
+                state.add_blocker("PASSAGE_REVIEW_INCOMPLETE")
+                return []
+            pairs.append((passage, current[0]))
+        return pairs
