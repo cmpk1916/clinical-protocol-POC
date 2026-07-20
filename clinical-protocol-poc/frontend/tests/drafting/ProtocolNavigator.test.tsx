@@ -23,6 +23,8 @@ describe("ProtocolNavigator", () => {
   it("shows the number of saved sections", () => {
     render(<ProtocolNavigator passages={passages} />);
 
-    assert.ok(screen.getByText("1 of 2 sections saved"));
+    assert.ok(screen.getByText("1 of 4 sections saved"));
+    assert.ok(screen.getByText("objectives endpoints — missing"));
+    assert.ok(screen.getByText("eligibility — missing"));
   });
 });

@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from protocol_poc.drafting.context import DraftContextBuilder
@@ -18,6 +19,10 @@ class DraftResult:
     version: int
 
 
+class PassageAlreadyExists(RuntimeError):
+    pass
+
+
 class DraftingService:
     SCOPED_SECTIONS = {"synopsis", "objectives_endpoints", "study_design", "eligibility"}
 
@@ -29,12 +34,21 @@ class DraftingService:
         if section not in self.SCOPED_SECTIONS:
             raise ValueError("section is outside the bounded drafting scope")
         StudyService(self.session).require_active(ctx, study_id)
+        existing = self._passage_for_section(ctx, study_id, section)
+        if existing is not None:
+            raise PassageAlreadyExists("a passage already exists for this section")
         output = self.composer.compose(
             section, DraftContextBuilder(self.session).for_section(ctx, study_id, section).facts
         )
         passage = Passage(tenant_id=ctx.tenant_id, study_id=study_id, section=section, status=self._status(output), current_version=1)
-        self.session.add(passage)
-        self.session.flush()
+        try:
+            with self.session.begin_nested():
+                self.session.add(passage)
+                self.session.flush()
+        except IntegrityError as error:
+            if self._passage_for_section(ctx, study_id, section) is not None:
+                raise PassageAlreadyExists("a passage already exists for this section") from error
+            raise
         self._persist_version(ctx, passage, output)
         return DraftResult(passage.id, output.text, passage.status, passage.current_version)
 
@@ -69,6 +83,13 @@ class DraftingService:
     @staticmethod
     def _status(output: ComposedPassage) -> str:
         return "blocked" if output.placeholders else "ready_for_review"
+
+    def _passage_for_section(self, ctx: TenantContext, study_id: str, section: str) -> Passage | None:
+        return self.session.scalar(select(Passage).where(
+            Passage.tenant_id == ctx.tenant_id,
+            Passage.study_id == study_id,
+            Passage.section == section,
+        ))
 
     def _persist_version(self, ctx: TenantContext, passage: Passage, output: ComposedPassage) -> None:
         version = PassageVersion(

@@ -35,6 +35,7 @@ class DocumentContract:
         ),
     )
     _synopsis_value_only_fields = (("duration", "duration:"),)
+    _duration = re.compile(r"^[1-9]\d*\s+(?:day|days|week|weeks)$")
 
     @classmethod
     def synopsis_headings(cls) -> dict[str, tuple[str, ...]]:
@@ -136,6 +137,14 @@ class DocumentContract:
                         "SYNOPSIS_VALUE_MISSING" if not matches else "SYNOPSIS_VALUE_AMBIGUOUS",
                         field,
                         f"The supported synopsis requires exactly one {field.replace('_', ' ')} value.",
+                    )
+                )
+            elif field == "duration" and self._duration.fullmatch(matches[0].removeprefix(label).strip()) is None:
+                findings.append(
+                    ContractFinding(
+                        "SYNOPSIS_DURATION_INVALID",
+                        field,
+                        "Duration must be a positive integer followed by day(s) or week(s).",
                     )
                 )
         return tuple(findings)

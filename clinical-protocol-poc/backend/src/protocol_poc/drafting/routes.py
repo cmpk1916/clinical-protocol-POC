@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from protocol_poc.config import get_settings
 from protocol_poc.drafting.models import Claim, Passage, PassageVersion, SupportLink
 from protocol_poc.drafting.review_service import PassageBlocked, PassageReviewError, PassageReviewService, PassageVersionConflict
-from protocol_poc.drafting.service import DraftingService
+from protocol_poc.drafting.service import DraftingService, PassageAlreadyExists
 from protocol_poc.identity import IdentityVerificationError, verify_identity_headers
 from protocol_poc.studies.service import StudyArchived, StudyNotFound, StudyService
 from protocol_poc.tenancy import TenantContext
@@ -69,6 +69,8 @@ def generate_passage(study_id: str, command: GenerateRequest, request: Request, 
         raise HTTPException(status_code=404, detail={"code": "STUDY_NOT_FOUND"}) from error
     except StudyArchived as error:
         raise HTTPException(status_code=409, detail={"code": "STUDY_ARCHIVED"}) from error
+    except PassageAlreadyExists as error:
+        raise HTTPException(status_code=409, detail={"code": "PASSAGE_ALREADY_EXISTS"}) from error
     return {"passage_id": result.passage_id, "text": result.text, "status": result.status, "version": result.version}
 
 

@@ -28,6 +28,9 @@ def test_files_migration_upgrade_constraints_and_downgrade(tmp_path: Path, monke
     assert "uq_passage_version_id_tenant" in {
         item["name"] for item in inspector.get_unique_constraints("passage_versions")
     }
+    assert "uq_passage_study_section_tenant" in {
+        item["name"] for item in inspector.get_unique_constraints("passages")
+    }
     assert "processing_attempts" in inspector.get_table_names()
     attempt_indexes = {
         item["name"]: item for item in inspector.get_indexes("processing_attempts")
@@ -67,7 +70,7 @@ def test_files_migration_upgrade_constraints_and_downgrade(tmp_path: Path, monke
             )
         }
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            "0010_processing_provenance"
+            "0011_passage_section_unique"
         )
     assert {
         "trg_processing_attempt_terminal_update",
@@ -85,6 +88,23 @@ def test_files_migration_upgrade_constraints_and_downgrade(tmp_path: Path, monke
                 "VALUES ('study-a', 'tenant-a', 'Study', 1, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
             )
         )
+        connection.execute(
+            text(
+                "INSERT INTO passages "
+                "(id, tenant_id, study_id, section, status, current_version) VALUES "
+                "('passage-a', 'tenant-a', 'study-a', 'study_design', 'draft', 1)"
+            )
+        )
+    with pytest.raises(IntegrityError):
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO passages "
+                    "(id, tenant_id, study_id, section, status, current_version) VALUES "
+                    "('passage-b', 'tenant-a', 'study-a', 'study_design', 'draft', 1)"
+                )
+            )
+    with engine.begin() as connection:
         connection.execute(
             text(
                 "INSERT INTO file_records (id, tenant_id, study_id, role, created_at) "

@@ -49,6 +49,7 @@ class LocalExtractor:
         "duration": "duration:",
     }
     _endpoint = re.compile(r"^(?P<name>.+?)\s+at\s+(?P<timepoint>Week\s+\d+)$", re.IGNORECASE)
+    _duration = re.compile(r"^(?P<count>[1-9]\d*)\s+(?P<unit>day|days|week|weeks)$", re.IGNORECASE)
     _arm = re.compile(
         r"^Arm:\s*(?P<arm>[^;]+);\s*Intervention:\s*(?P<intervention>.+?)"
         r"(?:\s+(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>mg)\s+"
@@ -142,15 +143,27 @@ class LocalExtractor:
                     "Intervention values must include an N mg dose and once daily frequency.",
                 )
             )
+        duration_id, duration = values["duration"]
+        duration_match = self._duration.fullmatch(duration)
+        if duration_match is None:
+            findings.append(
+                ExtractionFinding(
+                    "SYNOPSIS_DURATION_INVALID",
+                    "duration",
+                    "Duration must be a positive integer followed by day(s) or week(s).",
+                )
+            )
         if findings:
             return ExtractionProposal((), tuple(findings))
-        assert endpoint_match is not None and arm_match is not None
+        assert endpoint_match is not None and arm_match is not None and duration_match is not None
 
         identity_id, identity = values["study_identity"]
         objective_id, objective = values["objectives"]
         population_id, population = values["population"]
         eligibility_id, eligibility = values["eligibility"]
-        duration_id, duration = values["duration"]
+        duration_count = int(duration_match.group("count"))
+        duration_unit = duration_match.group("unit").casefold().removesuffix("s")
+        normalized_duration = f"{duration_count} {duration_unit if duration_count == 1 else f'{duration_unit}s'}"
         candidates = (
             self._candidate("study_identity", identity, identity_id),
             self._candidate("objective", objective, objective_id),
@@ -176,7 +189,7 @@ class LocalExtractor:
                 eligibility_id,
                 critical=True,
             ),
-            self._candidate("duration", duration, duration_id),
+            self._candidate("duration", normalized_duration, duration_id),
         )
         return ExtractionProposal(candidates, ())
 

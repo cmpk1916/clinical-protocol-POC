@@ -8,6 +8,9 @@ from protocol_poc.tenancy import TenantContext
 
 
 class QualityService:
+    REQUIRED_PASSAGE_SECTIONS = frozenset({
+        "synopsis", "objectives_endpoints", "study_design", "eligibility",
+    })
     DIMENSIONS = (
         "completeness", "consistency", "traceability", "template_conformance",
         "writer_review_status", "approved_guidance_coverage",
@@ -31,6 +34,28 @@ class QualityService:
                 blockers.append(QualityBlocker("REQUIRED_PLACEHOLDER", "A required placeholder remains", version.passage_id))
         if not passages:
             blockers.append(QualityBlocker("VALIDATION_INCOMPLETE", "No scoped passages have completed mandatory validation", study_id))
+        sections = [passage.section for passage in passages]
+        present_sections = set(sections)
+        missing_sections = self.REQUIRED_PASSAGE_SECTIONS - present_sections
+        duplicate_sections = {
+            section for section in present_sections if sections.count(section) > 1
+        }
+        blockers.extend(
+            QualityBlocker(
+                "REQUIRED_SECTION_MISSING",
+                f"Required governed section is missing: {section}",
+                study_id,
+            )
+            for section in sorted(missing_sections)
+        )
+        blockers.extend(
+            QualityBlocker(
+                "DUPLICATE_SECTION",
+                f"More than one governed passage exists for section: {section}",
+                study_id,
+            )
+            for section in sorted(duplicate_sections)
+        )
         support_counts: dict[str, int] = {}
         if versions:
             version_ids = [version.id for version in versions]
@@ -39,13 +64,26 @@ class QualityService:
         incomplete = [version for version in versions if version.text.strip() and not support_counts.get(version.id) and not version.placeholders]
         blockers.extend(QualityBlocker("INCOMPLETE_PROVENANCE", "A passage lacks support links", version.passage_id) for version in incomplete)
 
+        has_exact_sections = not missing_sections and not duplicate_sections and len(passages) == len(self.REQUIRED_PASSAGE_SECTIONS)
         accepted = sum(item.status == "accepted" for item in passages)
         dimensions = {
-            "completeness": self._dimension(len(passages) >= 4, len(passages), 4, blockers, {"REQUIRED_PLACEHOLDER", "VALIDATION_INCOMPLETE"}),
+            "completeness": self._dimension(
+                has_exact_sections,
+                len(present_sections & self.REQUIRED_PASSAGE_SECTIONS),
+                len(self.REQUIRED_PASSAGE_SECTIONS),
+                blockers,
+                {"REQUIRED_PLACEHOLDER", "VALIDATION_INCOMPLETE", "REQUIRED_SECTION_MISSING", "DUPLICATE_SECTION"},
+            ),
             "consistency": self._dimension(not any(item.code in {"UNSUPPORTED_CONTENT", "CRITICAL_CONTRADICTION", "STALE_PASSAGE"} for item in blockers), 1, 1, blockers, {"UNSUPPORTED_CONTENT", "CRITICAL_CONTRADICTION", "STALE_PASSAGE"}),
             "traceability": self._dimension(not incomplete, len(versions) - len(incomplete), len(versions), blockers, {"INCOMPLETE_PROVENANCE"}),
             "template_conformance": DimensionResult("needs_review" if passages else "not_applicable", 0, 1 if passages else 0),
-            "writer_review_status": self._dimension(bool(passages) and accepted == len(passages), accepted, len(passages), blockers, {"STALE_PASSAGE"}),
+            "writer_review_status": self._dimension(
+                has_exact_sections and accepted == len(self.REQUIRED_PASSAGE_SECTIONS),
+                accepted,
+                len(self.REQUIRED_PASSAGE_SECTIONS),
+                blockers,
+                {"STALE_PASSAGE", "REQUIRED_SECTION_MISSING", "DUPLICATE_SECTION"},
+            ),
             "approved_guidance_coverage": DimensionResult("needs_review" if passages else "not_applicable", 0, len(passages)),
         }
         return QualityScorecard(dimensions, tuple(blockers), "blocked" if blockers else "eligible")

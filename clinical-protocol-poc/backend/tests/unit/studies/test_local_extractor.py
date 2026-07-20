@@ -152,6 +152,34 @@ def test_missing_or_ambiguous_duration_returns_no_partial_candidates() -> None:
     ]
 
 
+@pytest.mark.parametrize("duration", ["ongoing", "Week 24", "0 weeks", "24 months"])
+def test_duration_requires_a_positive_day_or_week_grammar(duration: str) -> None:
+    evidence = tuple(
+        Evidence(item.id, f"Duration: {duration}" if item.id == "duration-line-1" else item.text)
+        for item in supported_synopsis_evidence()
+    )
+
+    proposal = LocalExtractor().extract(evidence)
+
+    assert proposal.candidates == ()
+    assert [(item.code, item.field) for item in proposal.findings] == [
+        ("SYNOPSIS_DURATION_INVALID", "duration")
+    ]
+
+
+def test_duration_normalizes_supported_singular_plural_with_exact_evidence() -> None:
+    evidence = tuple(
+        Evidence(item.id, "Duration: 1 weeks" if item.id == "duration-line-1" else item.text)
+        for item in supported_synopsis_evidence()
+    )
+
+    proposal = LocalExtractor().extract(evidence)
+    duration = next(item for item in proposal.candidates if item.kind == "duration")
+
+    assert duration.value_json == {"kind": "string", "value": "1 week"}
+    assert duration.source_evidence_id == "duration-line-1"
+
+
 def test_headings_and_labels_are_case_insensitive_and_whitespace_normalized() -> None:
     evidence = tuple(
         Evidence(

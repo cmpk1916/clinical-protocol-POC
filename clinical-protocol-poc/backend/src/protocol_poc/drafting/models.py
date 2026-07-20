@@ -16,6 +16,7 @@ class Passage(Base):
     __tablename__ = "passages"
     __table_args__ = (
         UniqueConstraint("id", "tenant_id", name="uq_passage_id_tenant"),
+        UniqueConstraint("tenant_id", "study_id", "section", name="uq_passage_study_section_tenant"),
         ForeignKeyConstraint(["study_id", "tenant_id"], ["studies.id", "studies.tenant_id"], name="fk_passage_study_tenant"),
         CheckConstraint("section IN ('synopsis','objectives_endpoints','study_design','eligibility')", name="ck_passage_section"),
         CheckConstraint("status IN ('draft','blocked','ready_for_review','accepted','rejected','stale')", name="ck_passage_status"),
