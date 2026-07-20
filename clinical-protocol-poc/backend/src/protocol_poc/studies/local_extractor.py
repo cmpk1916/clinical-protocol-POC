@@ -46,6 +46,7 @@ class LocalExtractor:
         "arms_interventions": "arm:",
         "population": "population:",
         "eligibility": "eligibility:",
+        "duration": "duration:",
     }
     _endpoint = re.compile(r"^(?P<name>.+?)\s+at\s+(?P<timepoint>Week\s+\d+)$", re.IGNORECASE)
     _arm = re.compile(
@@ -149,6 +150,7 @@ class LocalExtractor:
         objective_id, objective = values["objectives"]
         population_id, population = values["population"]
         eligibility_id, eligibility = values["eligibility"]
+        duration_id, duration = values["duration"]
         candidates = (
             self._candidate("study_identity", identity, identity_id),
             self._candidate("objective", objective, objective_id),
@@ -174,6 +176,7 @@ class LocalExtractor:
                 eligibility_id,
                 critical=True,
             ),
+            self._candidate("duration", duration, duration_id),
         )
         return ExtractionProposal(candidates, ())
 

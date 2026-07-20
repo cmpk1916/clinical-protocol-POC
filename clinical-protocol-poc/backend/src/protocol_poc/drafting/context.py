@@ -47,6 +47,6 @@ class DraftContextBuilder:
         ).scalars()
         return DraftContext(
             section=section,
-            facts={fact.id: {"kind": fact.kind, **version.value_json} for fact, version in facts},
+            facts={fact.id: {"fact_kind": fact.kind, **version.value_json} for fact, version in facts},
             guidance={chunk.id: chunk.content for chunk in guidance},
         )

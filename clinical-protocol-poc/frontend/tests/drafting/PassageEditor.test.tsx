@@ -65,6 +65,41 @@ describe("PassageEditor", () => {
     assert.equal(screen.getByLabelText("Passage text").textContent, "Participants receive 20 mg.");
     assert.ok(screen.getByText("Unsupported dose: 20 mg"));
   });
+
+  it("sends an optimistic versioned accept command and refreshes from the authoritative passage", async () => {
+    const user = userEvent.setup();
+    const calls: unknown[] = [];
+    const ready: DraftPassage = {
+      ...blockedPassage,
+      status: "valid",
+      findings: [],
+      text: "Participants receive 10 mg once daily.",
+    };
+    const commandApi = {
+      ...api,
+      async reviewPassage(input: unknown) {
+        calls.push(input);
+        return { ...ready, status: "accepted" as const };
+      },
+    };
+    let refreshed: DraftPassage | null = null;
+
+    render(<PassageEditor passage={{ ...ready, version: 3 }} api={commandApi} onUpdated={(passage) => { refreshed = passage; }} />);
+    await user.click(screen.getByRole("button", { name: "Accept passage" }));
+
+    assert.deepEqual(calls, [{ passageId: "passage-dose", action: "accept", expectedVersion: 3 }]);
+    const authoritativePassage = refreshed as DraftPassage | null;
+    assert.equal(authoritativePassage?.status, "accepted");
+  });
+
+  it("keeps archived passage review viewable but disables every mutation", () => {
+    render(<PassageEditor passage={{ ...blockedPassage, version: 1 }} api={api} readOnly />);
+
+    for (const name of ["Validate passage", "Accept passage", "Edit passage", "Reject passage", "Regenerate passage"]) {
+      assert.equal(screen.getByRole("button", { name }).hasAttribute("disabled"), true);
+    }
+    assert.ok(screen.getByText(/archived passage review is read-only/i));
+  });
 });
 
 describe("Scorecard", () => {

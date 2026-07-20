@@ -34,6 +34,7 @@ class DocumentContract:
             ("eligibility:", "inclusion:", "exclusion:"),
         ),
     )
+    _synopsis_value_only_fields = (("duration", "duration:"),)
 
     @classmethod
     def synopsis_headings(cls) -> dict[str, tuple[str, ...]]:
@@ -120,6 +121,19 @@ class DocumentContract:
                 findings.append(
                     ContractFinding(
                         code,
+                        field,
+                        f"The supported synopsis requires exactly one {field.replace('_', ' ')} value.",
+                    )
+                )
+        for field, label in self._synopsis_value_only_fields:
+            matches = [
+                line for line in lines
+                if line.startswith(label) and bool(line.removeprefix(label).strip())
+            ]
+            if len(matches) != 1:
+                findings.append(
+                    ContractFinding(
+                        "SYNOPSIS_VALUE_MISSING" if not matches else "SYNOPSIS_VALUE_AMBIGUOUS",
                         field,
                         f"The supported synopsis requires exactly one {field.replace('_', ' ')} value.",
                     )

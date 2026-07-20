@@ -113,7 +113,8 @@ export type DraftPassage = {
   id: string;
   section: string;
   text: string;
-  status: "valid" | "blocked" | "accepted" | "stale";
+  status: "valid" | "blocked" | "accepted" | "stale" | "rejected" | "draft";
+  version?: number;
   stale: boolean;
   findings: PassageFinding[];
   evidence: string[];
@@ -122,11 +123,19 @@ export type DraftPassage = {
 };
 
 export type PassageApi = {
-  acceptPassage(input: { passageId: string; text: string }): Promise<{ ok: true }>;
-  validatePassage(input: {
+  reviewPassage?: (input: {
+    passageId: string;
+    action: "accept" | "edit" | "reject" | "regenerate";
+    expectedVersion: number;
+    text?: string;
+    supportIds?: string[];
+    rationale?: string;
+  }) => Promise<DraftPassage>;
+  acceptPassage?: (input: { passageId: string; text: string }) => Promise<{ ok: true }>;
+  validatePassage?: (input: {
     passageId: string;
     text: string;
-  }): Promise<{ ok: boolean; findings: PassageFinding[] }>;
+  }) => Promise<{ ok: boolean; findings: PassageFinding[] }>;
 };
 
 export type QualityDimension = {

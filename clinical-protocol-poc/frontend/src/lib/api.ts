@@ -2,7 +2,6 @@ import type {
   DraftPassage,
   ExportApi,
   ExportState,
-  PassageApi,
   QualityScorecard,
   ReviewQueuePayload,
   StudyModel,
@@ -308,46 +307,109 @@ export const demoModelApi: ModelApi = {
   },
 };
 
-export const demoPassages: DraftPassage[] = [
-  {
-    id: "passage-dose",
-    section: "Treatment administration",
-    text: "Participants receive 10 mg once daily.",
-    status: "valid",
-    stale: false,
-    findings: [],
-    evidence: ["Synopsis p. 4 supports 10 mg once daily"],
-    guidance: ["Draft only from approved facts."],
-    impact: ["Traceability table", "Export snapshot"],
-  },
-];
-
-export const demoPassageApi: PassageApi = {
-  async acceptPassage() {
-    return { ok: true };
-  },
-  async validatePassage({ text }) {
-    if (text.includes("20 mg")) {
-      return {
-        ok: false,
-        findings: [{ code: "UNSUPPORTED_CONTENT", message: "Unsupported dose: 20 mg" }],
-      };
-    }
-
-    return { ok: true, findings: [] };
-  },
+type PassagePayload = {
+  id: string;
+  section: string;
+  text: string;
+  status: "draft" | "blocked" | "ready_for_review" | "accepted" | "rejected" | "stale";
+  version: number;
+  stale: boolean;
+  placeholders: string[];
+  findings: Array<{ code: string; message: string }>;
+  fact_support_ids: string[];
+  guidance_support_ids: string[];
 };
 
-export const demoScorecard: QualityScorecard = {
-  disclaimer: "Dimension-level signal only; not readiness.",
-  dimensions: [
-    { name: "Traceability", status: "pass", count: 0, findings: [] },
-    { name: "Completeness", status: "pass", count: 0, findings: [] },
-    { name: "Consistency", status: "pass", count: 0, findings: [] },
-    { name: "Guidance coverage", status: "pass", count: 0, findings: [] },
-    { name: "Staleness", status: "pass", count: 0, findings: [] },
-    { name: "Export blockers", status: "pass", count: 0, findings: [] },
-  ],
+type PassageListPayload = { read_only: boolean; passages: PassagePayload[] };
+
+function mapPassage(passage: PassagePayload): DraftPassage {
+  return {
+    id: passage.id,
+    section: passage.section.replaceAll("_", " "),
+    text: passage.text,
+    status: passage.status === "ready_for_review" ? "valid" : passage.status,
+    version: passage.version,
+    stale: passage.stale,
+    findings: [
+      ...passage.findings,
+      ...passage.placeholders.map((message) => ({ code: "REQUIRED_FACT", message })),
+    ],
+    evidence: passage.fact_support_ids.map((id) => `Approved fact support: ${id}`),
+    guidance: passage.guidance_support_ids,
+    impact: passage.stale ? ["This passage must be regenerated before acceptance."] : [],
+  };
+}
+
+async function loadPassages(studyId: string): Promise<{ readOnly: boolean; passages: DraftPassage[] }> {
+  const response = await fetch(`/api/local/studies/${encodeURIComponent(studyId)}/passages`);
+  if (!response.ok) throw new Error(await errorMessage(response, "Unable to load passages"));
+  const payload = await response.json() as PassageListPayload;
+  return { readOnly: payload.read_only, passages: payload.passages.map(mapPassage) };
+}
+
+export type DraftingApi = {
+  getPassages(studyId: string): Promise<{ readOnly: boolean; passages: DraftPassage[] }>;
+  getQuality(studyId: string): Promise<QualityScorecard>;
+  generatePassage(input: {
+    studyId: string;
+    section: "synopsis" | "objectives_endpoints" | "study_design" | "eligibility";
+  }): Promise<void>;
+  reviewPassage(input: {
+    studyId: string;
+    passageId: string;
+    action: "accept" | "edit" | "reject" | "regenerate";
+    expectedVersion: number;
+    text?: string;
+    supportIds?: string[];
+    rationale?: string;
+  }): Promise<DraftPassage>;
+};
+
+export const protocolDraftingApi: DraftingApi = {
+  getPassages: loadPassages,
+  async getQuality(studyId) {
+    const response = await fetch(`/api/local/studies/${encodeURIComponent(studyId)}/quality`);
+    if (!response.ok) throw new Error(await errorMessage(response, "Unable to load quality state"));
+    const payload = await response.json() as {
+      dimensions: Record<string, { status: "pass" | "needs_review" | "blocked" | "not_applicable"; passed_count: number; blocker_codes: string[] }>;
+      blockers: Array<{ message: string }>;
+    };
+    return {
+      disclaimer: "Synthetic-only, non-validated POC signal; not clinical, regulatory, or submission ready.",
+      dimensions: Object.entries(payload.dimensions).map(([name, value]) => ({
+        name,
+        status: value.status === "pass" ? "pass" : value.status === "blocked" ? "blocked" : "warning",
+        count: value.passed_count,
+        findings: value.blocker_codes,
+      })),
+    };
+  },
+  async generatePassage(input) {
+    const response = await fetch(`/api/local/studies/${encodeURIComponent(input.studyId)}/passages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ section: input.section }),
+    });
+    if (!response.ok) throw new Error(await errorMessage(response, "Unable to generate passage"));
+  },
+  async reviewPassage(input) {
+    const response = await fetch(`/api/local/passages/${encodeURIComponent(input.passageId)}/review`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: input.action,
+        expected_version: input.expectedVersion,
+        text: input.text,
+        support_ids: input.supportIds,
+        rationale: input.rationale,
+      }),
+    });
+    if (!response.ok) throw new Error(await errorMessage(response, "Unable to save passage review"));
+    const refreshed = await loadPassages(input.studyId);
+    const passage = refreshed.passages.find((item) => item.id === input.passageId);
+    if (!passage) throw new Error("PASSAGE_NOT_FOUND_AFTER_REFRESH");
+    return passage;
+  },
 };
 
 export const protocolExportApi: ExportApi = {

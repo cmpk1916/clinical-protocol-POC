@@ -3,9 +3,11 @@ import React from "react";
 import type { DraftPassage } from "../../lib/types";
 
 export function ProtocolNavigator({ passages }: Readonly<{ passages: DraftPassage[] }>) {
+  const savedSections = passages.filter((passage) => passage.status === "accepted").length;
   return (
     <nav aria-label="Protocol sections">
       <h2>Protocol sections</h2>
+      <p>{savedSections} of {passages.length} sections saved</p>
       <ol>
         {passages.map((passage) => (
           <li key={passage.id}>

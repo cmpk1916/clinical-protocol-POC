@@ -1,51 +1,108 @@
-import {
-  demoExportState,
-  demoPassages,
-  demoScorecard,
-} from "../../../../lib/api";
+"use client";
+
+import React, { use, useCallback, useEffect, useState } from "react";
+
 import { ProtocolNavigator } from "../../../../features/drafting/ProtocolNavigator";
 import { PassageEditor } from "../../../../features/drafting/PassageEditor";
 import { Scorecard } from "../../../../features/quality/Scorecard";
-import { ExportPanel } from "../../../../features/export/ExportPanel";
-import type { DraftPassage, ExportState } from "../../../../lib/types";
+import { protocolDraftingApi } from "../../../../lib/api";
+import type { DraftPassage, PassageApi, QualityScorecard } from "../../../../lib/types";
 
-type TestState = {
-  passage: DraftPassage;
-  export: ExportState;
-};
+const sections = [
+  ["synopsis", "Synopsis"],
+  ["objectives_endpoints", "Objectives and endpoints"],
+  ["study_design", "Study design"],
+  ["eligibility", "Eligibility"],
+] as const;
 
-async function getDraftState(studyId: string): Promise<TestState> {
-  const fallback = { passage: demoPassages[0], export: demoExportState };
-  const apiUrl = process.env.API_URL ?? "http://127.0.0.1:8000";
+type Section = (typeof sections)[number][0];
+type DraftState = { passages: DraftPassage[]; quality: QualityScorecard; readOnly: boolean };
 
-  try {
-    const response = await fetch(`${apiUrl}/test/studies/${studyId}/state`, {
-      cache: "no-store",
-    });
-    if (!response.ok) {
-      return fallback;
-    }
-    return (await response.json()) as TestState;
-  } catch {
-    return fallback;
-  }
-}
-
-export default async function DraftPage({
+export default function DraftPage({
   params,
 }: Readonly<{ params: Promise<{ studyId: string }> }>) {
-  const { studyId } = await params;
-  const state = await getDraftState(studyId);
-  const passages = [state.passage];
+  return <DraftWorkspace studyId={use(params).studyId} />;
+}
+
+function DraftWorkspace({ studyId }: Readonly<{ studyId: string }>) {
+  const [state, setState] = useState<DraftState | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [generating, setGenerating] = useState<Section | null>(null);
+
+  const refresh = useCallback(async () => {
+    const [passages, quality] = await Promise.all([
+      protocolDraftingApi.getPassages(studyId),
+      protocolDraftingApi.getQuality(studyId),
+    ]);
+    setState({ ...passages, quality });
+  }, [studyId]);
+
+  useEffect(() => {
+    void refresh().catch((cause: unknown) => {
+      setError(cause instanceof Error ? cause.message : "Unable to load drafting workspace");
+    });
+  }, [refresh]);
+
+  async function generate(section: Section) {
+    setGenerating(section);
+    setError(null);
+    try {
+      await protocolDraftingApi.generatePassage({ studyId, section });
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to generate passage");
+    } finally {
+      setGenerating(null);
+    }
+  }
+
+  if (error) {
+    return (
+      <main className="workspace-shell">
+        <h1>Drafting workspace unavailable</h1>
+        <p role="alert">{error}</p>
+      </main>
+    );
+  }
+  if (!state) {
+    return <main className="workspace-shell"><p role="status">Loading drafting workspace…</p></main>;
+  }
+
+  const passageApi: PassageApi = {
+    reviewPassage: ({ passageId, action, expectedVersion, text, supportIds, rationale }) =>
+      protocolDraftingApi.reviewPassage({
+        studyId, passageId, action, expectedVersion, text, supportIds, rationale,
+      }),
+  };
 
   return (
-    <main>
-      <ProtocolNavigator passages={passages} />
-      {passages.map((passage) => (
-        <PassageEditor key={passage.id} passage={passage} />
-      ))}
-      <Scorecard card={demoScorecard} />
-      <ExportPanel studyId={studyId} state={state.export} />
+    <main className="workspace-shell">
+      <ProtocolNavigator passages={state.passages} />
+      {sections.map(([section, label]) => {
+        const passage = state.passages.find((item) => item.id === section || item.section === section.replaceAll("_", " "));
+        return passage ? (
+          <PassageEditor
+            key={passage.id}
+            passage={passage}
+            api={passageApi}
+            readOnly={state.readOnly}
+            onUpdated={() => { void refresh().catch((cause: unknown) => setError(cause instanceof Error ? cause.message : "Unable to refresh passage")); }}
+          />
+        ) : (
+          <section key={section} aria-labelledby={`${section}-heading`}>
+            <h1 id={`${section}-heading`}>{label}</h1>
+            <p>No saved passage has been generated for this section.</p>
+            <button
+              type="button"
+              disabled={state.readOnly || generating !== null}
+              onClick={() => void generate(section)}
+            >
+              Generate {label}
+            </button>
+          </section>
+        );
+      })}
+      <Scorecard card={state.quality} />
     </main>
   );
 }

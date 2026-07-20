@@ -25,6 +25,7 @@ def supported_synopsis_evidence() -> tuple[Evidence, ...]:
         ("endpoints-line-1", "Endpoint: Response at Week 8"),
         ("arms-heading", "Arms and Interventions"),
         ("arms-line-1", "Arm: Experimental; Intervention: Example drug 10 mg once daily"),
+        ("duration-line-1", "Duration: 24 weeks"),
         ("population-heading", "Study Population"),
         ("population-line-1", "Population: Adults with synthetic condition"),
         ("eligibility-heading", "Eligibility Criteria"),
@@ -38,7 +39,7 @@ def test_extracts_required_facts_with_exact_evidence_ids() -> None:
     assert proposal.findings == ()
     assert {item.kind for item in proposal.candidates} >= {
         "study_identity", "objective", "endpoint", "timepoint", "arm",
-        "intervention", "dose", "population", "eligibility",
+        "intervention", "dose", "duration", "population", "eligibility",
     }
     dose = next(item for item in proposal.candidates if item.kind == "dose")
     assert dose.value_json == {
@@ -48,6 +49,9 @@ def test_extracts_required_facts_with_exact_evidence_ids() -> None:
     endpoint = next(item for item in proposal.candidates if item.kind == "endpoint")
     timepoint = next(item for item in proposal.candidates if item.kind == "timepoint")
     assert endpoint.source_evidence_id == timepoint.source_evidence_id == "endpoints-line-1"
+    duration = next(item for item in proposal.candidates if item.kind == "duration")
+    assert duration.value_json == {"kind": "string", "value": "24 weeks"}
+    assert duration.source_evidence_id == "duration-line-1"
     assert proposal.extractor_version == LOCAL_EXTRACTOR_VERSION == "local-rules-v1"
 
 
@@ -133,6 +137,18 @@ def test_missing_dose_on_intervention_line_returns_finding_and_no_partial_candid
     assert proposal.candidates == ()
     assert [(item.code, item.field) for item in proposal.findings] == [
         ("SYNOPSIS_DOSE_MISSING", "arms_interventions")
+    ]
+
+
+def test_missing_or_ambiguous_duration_returns_no_partial_candidates() -> None:
+    missing = tuple(item for item in supported_synopsis_evidence() if item.id != "duration-line-1")
+    ambiguous = supported_synopsis_evidence() + (Evidence("duration-line-2", "Duration: 12 weeks"),)
+
+    assert [(item.code, item.field) for item in LocalExtractor().extract(missing).findings] == [
+        ("SYNOPSIS_VALUE_MISSING", "duration")
+    ]
+    assert [(item.code, item.field) for item in LocalExtractor().extract(ambiguous).findings] == [
+        ("SYNOPSIS_VALUE_AMBIGUOUS", "duration")
     ]
 
 
