@@ -34,7 +34,7 @@ def test_local_composer_uses_fixed_templates_for_every_scoped_section() -> None:
     assert composer.compose("eligibility", facts).text == "Eligibility is limited to Age 18 years or older."
 
 
-def test_local_composer_fails_closed_when_required_fact_is_absent() -> None:
+def test_study_design_blocks_when_optional_duration_is_not_approved() -> None:
     facts = approved_fact_inputs()
     facts.pop("duration-a")
 

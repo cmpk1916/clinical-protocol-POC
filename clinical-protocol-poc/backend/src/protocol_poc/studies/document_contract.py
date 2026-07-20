@@ -34,7 +34,7 @@ class DocumentContract:
             ("eligibility:", "inclusion:", "exclusion:"),
         ),
     )
-    _synopsis_value_only_fields = (("duration", "duration:"),)
+    _optional_synopsis_value_fields = (("duration", "duration:"),)
     _duration = re.compile(r"^[1-9]\d*\s+(?:day|days|week|weeks)$")
 
     @classmethod
@@ -126,20 +126,20 @@ class DocumentContract:
                         f"The supported synopsis requires exactly one {field.replace('_', ' ')} value.",
                     )
                 )
-        for field, label in self._synopsis_value_only_fields:
+        for field, label in self._optional_synopsis_value_fields:
             matches = [
                 line for line in lines
-                if line.startswith(label) and bool(line.removeprefix(label).strip())
+                if line.startswith(label)
             ]
-            if len(matches) != 1:
+            if len(matches) > 1:
                 findings.append(
                     ContractFinding(
-                        "SYNOPSIS_VALUE_MISSING" if not matches else "SYNOPSIS_VALUE_AMBIGUOUS",
+                        "SYNOPSIS_VALUE_AMBIGUOUS",
                         field,
                         f"The supported synopsis requires exactly one {field.replace('_', ' ')} value.",
                     )
                 )
-            elif field == "duration" and self._duration.fullmatch(matches[0].removeprefix(label).strip()) is None:
+            elif len(matches) == 1 and self._duration.fullmatch(matches[0].removeprefix(label).strip()) is None:
                 findings.append(
                     ContractFinding(
                         "SYNOPSIS_DURATION_INVALID",

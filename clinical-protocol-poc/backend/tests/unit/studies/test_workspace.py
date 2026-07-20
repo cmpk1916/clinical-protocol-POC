@@ -1,5 +1,6 @@
 import pytest
 from sqlalchemy import create_engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from protocol_poc.db import Base
@@ -218,7 +219,7 @@ def test_workspace_surfaces_quality_blockers_before_export(session: Session) -> 
     assert {item.code for item in summary.blockers} == {"INCOMPLETE_PROVENANCE"}
 
 
-def test_workspace_fails_closed_when_required_passage_section_is_duplicated(
+def test_database_rejects_duplicate_required_passage_sections(
     session: Session,
 ) -> None:
     ctx, study_id = _scenario(session, "accepted_facts")
@@ -234,14 +235,5 @@ def test_workspace_fails_closed_when_required_passage_section_is_duplicated(
                 status="accepted",
             )
         )
-    session.flush()
-
-    summary = WorkspaceSummaryService(session).get(ctx, study_id)
-
-    assert summary.step == "passage_review"
-    assert summary.next_action.kind == "review_passages"
-    assert {item.code for item in summary.blockers} == {
-        "PASSAGE_SECTION_DUPLICATE",
-        "PASSAGE_SECTION_MISSING",
-    }
-    assert summary.steps[3].status == "blocked"
+    with pytest.raises(IntegrityError):
+        session.flush()

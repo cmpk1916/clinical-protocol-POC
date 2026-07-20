@@ -140,14 +140,33 @@ def test_missing_dose_on_intervention_line_returns_finding_and_no_partial_candid
     ]
 
 
-def test_missing_or_ambiguous_duration_returns_no_partial_candidates() -> None:
+def test_absent_duration_keeps_original_required_candidates_without_inference() -> None:
     missing = tuple(item for item in supported_synopsis_evidence() if item.id != "duration-line-1")
+
+    proposal = LocalExtractor().extract(missing)
+
+    assert proposal.findings == ()
+    assert {item.kind for item in proposal.candidates} == {
+        "study_identity", "objective", "endpoint", "timepoint", "arm",
+        "intervention", "dose", "population", "eligibility",
+    }
+
+
+def test_ambiguous_optional_duration_returns_no_partial_candidates() -> None:
     ambiguous = supported_synopsis_evidence() + (Evidence("duration-line-2", "Duration: 12 weeks"),)
 
-    assert [(item.code, item.field) for item in LocalExtractor().extract(missing).findings] == [
-        ("SYNOPSIS_VALUE_MISSING", "duration")
-    ]
     assert [(item.code, item.field) for item in LocalExtractor().extract(ambiguous).findings] == [
+        ("SYNOPSIS_VALUE_AMBIGUOUS", "duration")
+    ]
+
+
+def test_an_empty_second_duration_label_is_ambiguous_and_returns_no_candidates() -> None:
+    evidence = supported_synopsis_evidence() + (Evidence("duration-line-empty", "Duration:"),)
+
+    proposal = LocalExtractor().extract(evidence)
+
+    assert proposal.candidates == ()
+    assert [(item.code, item.field) for item in proposal.findings] == [
         ("SYNOPSIS_VALUE_AMBIGUOUS", "duration")
     ]
 

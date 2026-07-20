@@ -51,7 +51,6 @@ def test_synopsis_reports_all_missing_sections() -> None:
         "arms_interventions",
         "population",
         "eligibility",
-        "duration",
     }
 
 
@@ -75,6 +74,20 @@ def test_synopsis_recognizes_supported_headings_and_fields_case_insensitively() 
     assert DocumentContract().validate_synopsis(supported) == ()
 
 
+def test_synopsis_allows_an_absent_optional_duration() -> None:
+    supported = evidence(
+        "Study Identity", "Short title: SYN-1",
+        "Objectives", "Objective: Evaluate response",
+        "Endpoints", "Endpoint: Response at Week 8",
+        "Arms and Interventions",
+        "Arm: Experimental; Intervention: Example drug 10 mg once daily",
+        "Study Population", "Population: Adults with synthetic condition",
+        "Eligibility Criteria", "Eligibility: Age 18 years or older",
+    )
+
+    assert DocumentContract().validate_synopsis(supported) == ()
+
+
 def test_synopsis_rejects_duration_outside_the_bounded_grammar() -> None:
     supported = evidence(
         "Study Identity", "Short title: SYN-1",
@@ -91,6 +104,24 @@ def test_synopsis_rejects_duration_outside_the_bounded_grammar() -> None:
         (finding.code, finding.field)
         for finding in DocumentContract().validate_synopsis(supported)
     ] == [("SYNOPSIS_DURATION_INVALID", "duration")]
+
+
+def test_synopsis_rejects_multiple_duration_labels_even_when_one_is_empty() -> None:
+    supported = evidence(
+        "Study Identity", "Short title: SYN-1",
+        "Objectives", "Objective: Evaluate response",
+        "Endpoints", "Endpoint: Response at Week 8",
+        "Arms and Interventions",
+        "Arm: Experimental; Intervention: Example drug 10 mg once daily",
+        "Duration: 24 weeks", "Duration:",
+        "Study Population", "Population: Adults with synthetic condition",
+        "Eligibility Criteria", "Eligibility: Age 18 years or older",
+    )
+
+    assert [
+        (finding.code, finding.field)
+        for finding in DocumentContract().validate_synopsis(supported)
+    ] == [("SYNOPSIS_VALUE_AMBIGUOUS", "duration")]
 
 
 def test_synopsis_reports_unsupported_and_missing_heading_stably() -> None:
