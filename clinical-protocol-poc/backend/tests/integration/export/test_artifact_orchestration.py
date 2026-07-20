@@ -9,7 +9,7 @@ from protocol_poc.export.artifact_service import EXPECTED_FILENAMES, ExportArtif
 from protocol_poc.export.orchestration import ExportCommand, ExportOrchestrator
 from protocol_poc.export.service import ExportDenied
 from protocol_poc.export.models import ExportArtifactRecord, ExportSnapshot
-from protocol_poc.files.models import FileRecord, FileVersion
+from protocol_poc.files.models import FileRecord, FileVersion, StudyInput
 from protocol_poc.files.service import LocalFileStorage
 from protocol_poc.drafting.models import Passage, PassageVersion, SupportLink
 from protocol_poc.quality.models import DimensionResult, QualityScorecard
@@ -17,7 +17,7 @@ from protocol_poc.rendering.artifact_service import ArtifactService
 from protocol_poc.rendering.docx_renderer import RenderSnapshot
 from protocol_poc.rendering.template_map import build_template
 from protocol_poc.tenancy import TenantContext
-from protocol_poc.studies.models import Fact, FactVersion, Study
+from protocol_poc.studies.models import Fact, FactVersion, ProcessingAttempt, Study
 
 
 def card() -> QualityScorecard:
@@ -150,6 +150,33 @@ def seed_eligible_study(session: Session, storage: LocalFileStorage) -> ExportCo
         content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         storage_key=storage_key, status="succeeded",
     ))
+    synopsis_key = "tenants/synopsis/source.docx"
+    storage.put(synopsis_key, template)
+    session.add(FileRecord(
+        id="synopsis-file", tenant_id="tenant-a", study_id="study-a", role="synopsis",
+    ))
+    session.add(FileVersion(
+        id="synopsis-v1", tenant_id="tenant-a", file_record_id="synopsis-file", version=1,
+        display_filename="synopsis.docx", checksum_sha256=template_hash,
+        size_bytes=len(template),
+        content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        storage_key=synopsis_key, status="succeeded",
+    ))
+    session.add_all([
+        StudyInput(
+            tenant_id="tenant-a", study_id="study-a", role="template",
+            current_file_version_id="template-v1", conformance_status="conforming",
+        ),
+        StudyInput(
+            tenant_id="tenant-a", study_id="study-a", role="synopsis",
+            current_file_version_id="synopsis-v1", conformance_status="conforming",
+        ),
+        ProcessingAttempt(
+            id="processing-v1", tenant_id="tenant-a", study_id="study-a",
+            synopsis_version_id="synopsis-v1", extractor_name="local-rules",
+            extractor_version="local-rules-v1", status="succeeded", findings_json=[],
+        ),
+    ])
     session.commit()
     return ExportCommand(1, "template-v1", template_hash)
 
@@ -190,5 +217,55 @@ def test_orchestrator_fails_closed_for_invalid_template(
                 ExportCommand(1, version_id, template_hash),
             )
         assert captured.value.codes == (expected,)
+        session.rollback()
+        assert session.scalars(select(ExportArtifactRecord)).all() == []
+
+
+@pytest.mark.parametrize(
+    ("change", "expected"),
+    [
+        ("archive", "STUDY_ARCHIVED"),
+        ("unprocessed_synopsis", "INPUT_PROCESSING_INCOMPLETE"),
+        ("candidate_fact", "FACT_REVIEW_INCOMPLETE"),
+        ("stale_passage", "STALE_PASSAGE"),
+        ("noncurrent_template", "TEMPLATE_VERSION_INVALID"),
+    ],
+)
+def test_orchestrator_rechecks_current_workspace_authority_before_export(
+    tmp_path: Path, change: str, expected: str
+) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    storage = LocalFileStorage(tmp_path)
+    with Session(engine) as session:
+        command = seed_eligible_study(session, storage)
+        study = session.get(Study, "study-a")
+        assert study is not None
+        if change == "archive":
+            study.lifecycle = "archived"
+        elif change == "unprocessed_synopsis":
+            current = session.scalar(select(StudyInput).where(StudyInput.role == "synopsis"))
+            assert current is not None
+            current.current_file_version_id = "template-v1"
+        elif change == "candidate_fact":
+            fact = session.get(Fact, "fact-dose")
+            assert fact is not None
+            fact.status = "candidate"
+        elif change == "stale_passage":
+            passage = session.get(Passage, "passage-eligibility")
+            assert passage is not None
+            passage.status = "stale"
+        else:
+            current = session.scalar(select(StudyInput).where(StudyInput.role == "template"))
+            assert current is not None
+            current.current_file_version_id = "synopsis-v1"
+        session.commit()
+
+        with pytest.raises(ExportDenied) as captured:
+            ExportOrchestrator(session, storage, "renderer-v1").create(
+                TenantContext("tenant-a", "writer"), "study-a", command
+            )
+
+        assert expected in captured.value.codes
         session.rollback()
         assert session.scalars(select(ExportArtifactRecord)).all() == []

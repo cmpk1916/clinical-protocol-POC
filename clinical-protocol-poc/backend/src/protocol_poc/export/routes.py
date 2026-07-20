@@ -104,6 +104,7 @@ def export(
             detail={"code": "EXPORT_BLOCKED", "blockers": error.codes},
         ) from error
     except (OSError, ValueError) as error:
+        session.rollback()
         raise HTTPException(
             status_code=409,
             detail={"code": "EXPORT_FAILED", "blockers": ["EXPORT_FAILED"]},

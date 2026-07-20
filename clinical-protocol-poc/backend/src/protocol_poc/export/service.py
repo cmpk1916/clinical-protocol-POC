@@ -7,9 +7,10 @@ from protocol_poc.audit.service import AuditService
 from protocol_poc.drafting.models import Passage, PassageVersion
 from protocol_poc.export.gate import ExportGate, ExportState
 from protocol_poc.export.models import ExportSnapshot, SnapshotFact, SnapshotPassage, SnapshotTemplate
+from protocol_poc.files.models import FileVersion, StudyInput
 from protocol_poc.quality.models import QualityScorecard
 from protocol_poc.quality.service import QualityService
-from protocol_poc.studies.models import Fact, FactVersion, Study
+from protocol_poc.studies.models import Fact, FactVersion, ProcessingAttempt, Study
 from protocol_poc.tenancy import TenantContext
 
 
@@ -34,9 +35,20 @@ class ExportService:
         state = ExportState()
         if study is None or study.version != expected_study_version:
             state.add_blocker("STUDY_VERSION_CHANGED")
+        elif study.lifecycle != "active":
+            state.add_blocker("STUDY_ARCHIVED")
+        if study is not None:
+            self._check_current_workspace_authority(
+                ctx,
+                study_id,
+                template_version_id,
+                template_hash,
+                state,
+            )
         try:
             card = self.quality.calculate(ctx, study_id)
-            state.blocker_codes.extend(item.code for item in card.blockers)
+            for blocker in card.blockers:
+                state.add_quality_blocker(blocker.code)
         except Exception:
             state.validator_exception = True
         decision = ExportGate().evaluate(state)
@@ -60,3 +72,69 @@ class ExportService:
         self.audit.append(ctx, "export.snapshot_created", "export_snapshot", snapshot.id, {"study_id": study_id, "study_version": study.version})
         self.session.flush()
         return snapshot
+
+    def _check_current_workspace_authority(
+        self,
+        ctx: TenantContext,
+        study_id: str,
+        template_version_id: str,
+        template_hash: str,
+        state: ExportState,
+    ) -> None:
+        inputs = {
+            item.role: item
+            for item in self.session.scalars(
+                select(StudyInput)
+                .where(StudyInput.tenant_id == ctx.tenant_id, StudyInput.study_id == study_id)
+                .with_for_update()
+            )
+        }
+        template = inputs.get("template")
+        if template is None:
+            state.add_blocker("TEMPLATE_VERSION_INVALID")
+        elif template.conformance_status != "conforming":
+            state.add_blocker("TEMPLATE_NOT_CONFORMED")
+        elif template.current_file_version_id != template_version_id:
+            state.add_blocker("TEMPLATE_VERSION_INVALID")
+        else:
+            version = self.session.scalar(
+                select(FileVersion).where(
+                    FileVersion.id == template.current_file_version_id,
+                    FileVersion.tenant_id == ctx.tenant_id,
+                )
+            )
+            if version is None:
+                state.add_blocker("TEMPLATE_VERSION_INVALID")
+            elif version.checksum_sha256 != template_hash:
+                state.add_blocker("TEMPLATE_HASH_MISMATCH")
+
+        synopsis = inputs.get("synopsis")
+        if synopsis is None or self.session.scalar(
+            select(ProcessingAttempt.id).where(
+                ProcessingAttempt.tenant_id == ctx.tenant_id,
+                ProcessingAttempt.study_id == study_id,
+                ProcessingAttempt.synopsis_version_id == synopsis.current_file_version_id,
+                ProcessingAttempt.status == "succeeded",
+            )
+        ) is None:
+            state.add_blocker("INPUT_PROCESSING_INCOMPLETE")
+
+        if self.session.scalar(
+            select(Fact.id).where(
+                Fact.tenant_id == ctx.tenant_id,
+                Fact.study_id == study_id,
+                Fact.status.in_(("candidate", "conflicted")),
+            ).limit(1)
+        ) is not None:
+            state.add_blocker("FACT_REVIEW_INCOMPLETE")
+
+        passages = list(self.session.scalars(
+            select(Passage).where(Passage.tenant_id == ctx.tenant_id, Passage.study_id == study_id)
+        ))
+        required_sections = {"synopsis", "objectives_endpoints", "study_design", "eligibility"}
+        if (
+            len(passages) != len(required_sections)
+            or {passage.section for passage in passages} != required_sections
+            or any(passage.status != "accepted" for passage in passages)
+        ):
+            state.add_blocker("PASSAGE_REVIEW_INCOMPLETE")

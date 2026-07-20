@@ -5,7 +5,8 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { ExportPanel } from "../../src/features/export/ExportPanel";
-import type { ExportApi, ExportState } from "../../src/lib/types";
+import { protocolExportApi } from "../../src/lib/api";
+import type { ExportApi, ExportCommand, ExportState } from "../../src/lib/types";
 
 afterEach(cleanup);
 
@@ -15,9 +16,15 @@ const blockedState: ExportState = {
   artifacts: [],
 };
 
+const exportCommand: ExportCommand = {
+  expectedStudyVersion: 3,
+  templateVersionId: "template-v3",
+  templateHash: "a".repeat(64),
+};
+
 describe("ExportPanel", () => {
   it("shows every blocker and keeps export disabled until the server gate is clear", () => {
-    render(<ExportPanel studyId="study-1" state={blockedState} api={{ createExport: async () => blockedState }} />);
+    render(<ExportPanel studyId="study-1" state={blockedState} exportCommand={exportCommand} api={{ createExport: async () => blockedState }} />);
 
     assert.ok(screen.getByRole("alert"));
     assert.ok(screen.getByText("Unsupported dose claim must be resolved"));
@@ -27,7 +34,8 @@ describe("ExportPanel", () => {
   it("shows artifact names, hashes, and the shared snapshot after export succeeds", async () => {
     const user = userEvent.setup();
     const api: ExportApi = {
-      async createExport() {
+      async createExport(_studyId, command) {
+        assert.deepEqual(command, exportCommand);
         return {
           blockers: [],
           snapshotId: "snapshot-123",
@@ -40,12 +48,67 @@ describe("ExportPanel", () => {
       },
     };
 
-    render(<ExportPanel studyId="study-1" state={{ blockers: [], snapshotId: null, artifacts: [] }} api={api} />);
+    render(<ExportPanel studyId="study-1" state={{ blockers: [], snapshotId: null, artifacts: [] }} exportCommand={exportCommand} api={api} />);
     await user.click(screen.getByRole("button", { name: "Create export" }));
 
     assert.equal(screen.getByTestId("snapshot-id").textContent, "snapshot-123");
     assert.ok(screen.getByText("docxhash"));
     assert.equal(screen.getByRole("link", { name: "Download protocol.docx" }).getAttribute("href"), "/api/artifacts/docx");
     assert.match(screen.getByTestId("artifact-snapshot-ids").textContent ?? "", /snapshot-123/);
+  });
+
+  it("replaces stale artifacts with server blockers after a failed export", async () => {
+    const user = userEvent.setup();
+    const api: ExportApi = {
+      async createExport(_studyId, command) {
+        assert.deepEqual(command, exportCommand);
+        return { blockers: ["STUDY_ARCHIVED"], snapshotId: null, artifacts: [] };
+      },
+    };
+    render(
+      <ExportPanel
+        studyId="study-1"
+        exportCommand={exportCommand}
+        state={{
+          blockers: [],
+          snapshotId: "old-snapshot",
+          artifacts: [{ id: "old", name: "protocol.docx", mediaType: "application/docx", sha256: "old", snapshotId: "old-snapshot", downloadUrl: "/old" }],
+        }}
+        api={api}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Create export" }));
+
+    assert.ok(screen.getByText("STUDY_ARCHIVED"));
+    assert.equal(screen.queryByRole("link", { name: "Download protocol.docx" }), null);
+  });
+
+  it("posts the workspace command through the local proxy and rewrites artifact downloads", async () => {
+    const originalFetch = globalThis.fetch;
+    let request: { url: string; init?: RequestInit } | null = null;
+    globalThis.fetch = async (url, init) => {
+      request = { url: String(url), init };
+      return new Response(JSON.stringify({
+        blockers: [],
+        snapshotId: "snapshot-123",
+        artifacts: [{ id: "docx", name: "protocol.docx", mediaType: "application/docx", sha256: "docxhash", snapshotId: "snapshot-123", downloadUrl: "/api/export-artifacts/docx" }],
+      }), { status: 201, headers: { "Content-Type": "application/json" } });
+    };
+    try {
+      const result = await protocolExportApi.createExport("study-1", exportCommand);
+
+      assert.deepEqual(request, {
+        url: "/api/local/studies/study-1/exports",
+        init: {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(exportCommand),
+        },
+      });
+      assert.equal(result.artifacts[0]?.downloadUrl, "/api/local/export-artifacts/docx");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

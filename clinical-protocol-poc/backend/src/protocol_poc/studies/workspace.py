@@ -78,6 +78,13 @@ class WorkspaceStudy:
 
 
 @dataclass(frozen=True, slots=True)
+class WorkspaceExportCommand:
+    expected_study_version: int
+    template_version_id: str
+    template_hash: str
+
+
+@dataclass(frozen=True, slots=True)
 class WorkspaceSummary:
     study: WorkspaceStudy
     step: WorkspaceStep
@@ -88,6 +95,7 @@ class WorkspaceSummary:
     inputs: dict[str, WorkspaceInput | None]
     processing: WorkspaceProcessing | None
     next_action: WorkspaceAction
+    export_command: WorkspaceExportCommand | None
 
 
 class WorkspaceSummaryService:
@@ -173,7 +181,26 @@ class WorkspaceSummaryService:
             inputs=inputs,
             processing=processing,
             next_action=action,
+            export_command=self._export_command(study, inputs),
         )
+
+    def _export_command(
+        self,
+        study: Study,
+        inputs: dict[str, WorkspaceInput | None],
+    ) -> WorkspaceExportCommand | None:
+        template = inputs["template"]
+        if template is None or template.conformance_status != "conforming":
+            return None
+        version = self._session.scalar(
+            select(FileVersion).where(
+                FileVersion.id == template.version_id,
+                FileVersion.tenant_id == study.tenant_id,
+            )
+        )
+        if version is None:
+            return None
+        return WorkspaceExportCommand(study.version, version.id, version.checksum_sha256)
 
     def _inputs(
         self, tenant_id: str, study_id: str

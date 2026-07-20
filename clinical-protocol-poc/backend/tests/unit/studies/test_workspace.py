@@ -118,6 +118,19 @@ def test_workspace_derives_next_safe_action(
     assert (summary.step, summary.next_action.kind) == (step, action)
 
 
+def test_workspace_returns_the_current_conformed_template_export_command(
+    session: Session,
+) -> None:
+    ctx, study_id = _scenario(session, "accepted_passages")
+
+    summary = WorkspaceSummaryService(session).get(ctx, study_id)
+
+    assert summary.export_command is not None
+    assert summary.export_command.expected_study_version == 1
+    assert summary.export_command.template_version_id == summary.inputs["template"].version_id  # type: ignore[union-attr]
+    assert summary.export_command.template_hash == "b" * 64
+
+
 def test_workspace_reports_latest_failed_attempt_findings_and_retry(session: Session) -> None:
     ctx, study_id = _scenario(session, "needs_processing")
     synopsis = WorkspaceSummaryService(session).get(ctx, study_id).inputs["synopsis"]

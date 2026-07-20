@@ -29,6 +29,7 @@ function summary(overrides: Partial<WorkspaceSummary> = {}): WorkspaceSummary {
     },
     processing: { attemptId: "attempt-failed", status: "failed", findings: [] },
     nextAction: { kind: "retry_processing", label: "Retry synopsis processing", targetId: "attempt-failed", href: null },
+    exportCommand: null,
     ...overrides,
   };
 }

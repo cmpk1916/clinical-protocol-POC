@@ -5,8 +5,9 @@ import React, { use, useCallback, useEffect, useState } from "react";
 import { ProtocolNavigator } from "../../../../features/drafting/ProtocolNavigator";
 import { PassageEditor } from "../../../../features/drafting/PassageEditor";
 import { Scorecard } from "../../../../features/quality/Scorecard";
-import { protocolDraftingApi } from "../../../../lib/api";
-import type { DraftPassage, PassageApi, QualityScorecard } from "../../../../lib/types";
+import { ExportPanel } from "../../../../features/export/ExportPanel";
+import { protocolDraftingApi, protocolWorkspaceApi } from "../../../../lib/api";
+import type { DraftPassage, ExportState, PassageApi, QualityScorecard, WorkspaceSummary } from "../../../../lib/types";
 
 const sections = [
   ["synopsis", "Synopsis"],
@@ -16,7 +17,13 @@ const sections = [
 ] as const;
 
 type Section = (typeof sections)[number][0];
-type DraftState = { passages: DraftPassage[]; quality: QualityScorecard; readOnly: boolean };
+type DraftState = {
+  passages: DraftPassage[];
+  quality: QualityScorecard;
+  readOnly: boolean;
+  exportCommand: WorkspaceSummary["exportCommand"];
+  exportBlockers: string[];
+};
 
 export default function DraftPage({
   params,
@@ -30,11 +37,17 @@ function DraftWorkspace({ studyId }: Readonly<{ studyId: string }>) {
   const [generating, setGenerating] = useState<Section | null>(null);
 
   const refresh = useCallback(async () => {
-    const [passages, quality] = await Promise.all([
+    const [passages, quality, workspace] = await Promise.all([
       protocolDraftingApi.getPassages(studyId),
       protocolDraftingApi.getQuality(studyId),
+      protocolWorkspaceApi.getWorkspace(studyId),
     ]);
-    setState({ ...passages, quality });
+    setState({
+      ...passages,
+      quality,
+      exportCommand: workspace.exportCommand,
+      exportBlockers: workspace.blockers.map((blocker) => blocker.code),
+    });
   }, [studyId]);
 
   useEffect(() => {
@@ -103,6 +116,11 @@ function DraftWorkspace({ studyId }: Readonly<{ studyId: string }>) {
         );
       })}
       <Scorecard card={state.quality} />
+      <ExportPanel
+        studyId={studyId}
+        exportCommand={state.exportCommand}
+        state={{ blockers: state.exportBlockers, snapshotId: null, artifacts: [] } satisfies ExportState}
+      />
     </main>
   );
 }

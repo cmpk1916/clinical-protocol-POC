@@ -84,6 +84,11 @@ type WorkspacePayload = {
     target_id: string | null;
     href: string | null;
   };
+  export_command: null | {
+    expected_study_version: number;
+    template_version_id: string;
+    template_hash: string;
+  };
 };
 
 function mapInput(input: WorkspacePayload["inputs"]["synopsis"]): WorkspaceInput | null {
@@ -129,6 +134,11 @@ export function toWorkspaceSummary(payload: WorkspacePayload): WorkspaceSummary 
       targetId: payload.next_action.target_id,
       href: payload.next_action.href,
     },
+    exportCommand: payload.export_command ? {
+      expectedStudyVersion: payload.export_command.expected_study_version,
+      templateVersionId: payload.export_command.template_version_id,
+      templateHash: payload.export_command.template_hash,
+    } : null,
   };
 }
 
@@ -413,11 +423,11 @@ export const protocolDraftingApi: DraftingApi = {
 };
 
 export const protocolExportApi: ExportApi = {
-  async createExport(studyId) {
-    const response = await fetch(`/api/studies/${encodeURIComponent(studyId)}/exports`, {
+  async createExport(studyId, command) {
+    const response = await fetch(`/api/local/studies/${encodeURIComponent(studyId)}/exports`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: "{}",
+      body: JSON.stringify(command),
     });
     const payload = (await response.json()) as ExportState & {
       detail?: { blockers?: string[] };
@@ -429,7 +439,13 @@ export const protocolExportApi: ExportApi = {
         artifacts: [],
       };
     }
-    return payload;
+    return {
+      ...payload,
+      artifacts: payload.artifacts.map((artifact) => ({
+        ...artifact,
+        downloadUrl: `/api/local/export-artifacts/${encodeURIComponent(artifact.id)}`,
+      })),
+    };
   },
 };
 

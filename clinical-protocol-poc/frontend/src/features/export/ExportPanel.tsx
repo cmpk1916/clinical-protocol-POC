@@ -4,15 +4,34 @@ import React from "react";
 import { useState } from "react";
 
 import { protocolExportApi } from "../../lib/api";
-import type { ExportApi, ExportState } from "../../lib/types";
+import type { ExportApi, ExportCommand, ExportState } from "../../lib/types";
 
 export function ExportPanel({
   studyId,
   state,
+  exportCommand,
   api = protocolExportApi,
-}: Readonly<{ studyId: string; state: ExportState; api?: ExportApi }>) {
+}: Readonly<{
+  studyId: string;
+  state: ExportState;
+  exportCommand: ExportCommand | null;
+  api?: ExportApi;
+}>) {
   const [exportState, setExportState] = useState(state);
-  const blocked = exportState.blockers.length > 0;
+  const blocked = exportState.blockers.length > 0 || exportCommand === null;
+
+  async function createExport() {
+    if (exportCommand === null) return;
+    try {
+      setExportState(await api.createExport(studyId, exportCommand));
+    } catch (cause) {
+      setExportState({
+        blockers: [cause instanceof Error ? cause.message : "EXPORT_FAILED"],
+        snapshotId: null,
+        artifacts: [],
+      });
+    }
+  }
 
   return (
     <section aria-labelledby="export-heading">
@@ -30,7 +49,7 @@ export function ExportPanel({
       <button
         type="button"
         disabled={blocked}
-        onClick={async () => setExportState(await api.createExport(studyId))}
+        onClick={() => void createExport()}
       >
         Create export
       </button>

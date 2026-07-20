@@ -37,6 +37,12 @@ export type WorkspaceInput = {
 
 export type WorkspaceBlocker = { code: string; message: string };
 
+export type ExportCommand = {
+  expectedStudyVersion: number;
+  templateVersionId: string;
+  templateHash: string;
+};
+
 export type WorkspaceSummary = {
   study: {
     id: string;
@@ -75,6 +81,7 @@ export type WorkspaceSummary = {
     targetId: string | null;
     href: string | null;
   };
+  exportCommand: ExportCommand | null;
 };
 
 export type ReviewQueuePayload = {
@@ -166,5 +173,5 @@ export type ExportState = {
 };
 
 export type ExportApi = {
-  createExport(studyId: string): Promise<ExportState>;
+  createExport(studyId: string, command: ExportCommand): Promise<ExportState>;
 };
