@@ -24,6 +24,12 @@ class ArtifactDescriptor:
     download_url: str
 
 
+@dataclass(frozen=True)
+class PersistedArtifacts:
+    descriptors: tuple[ArtifactDescriptor, ...]
+    written_storage_keys: tuple[str, ...]
+
+
 class ExportArtifactRepository:
     def __init__(self, session: Session, storage: FileStorage) -> None:
         self._session = session
@@ -34,7 +40,7 @@ class ExportArtifactRepository:
         ctx: TenantContext,
         snapshot: ExportSnapshot,
         artifacts: list[Artifact],
-    ) -> tuple[ArtifactDescriptor, ...]:
+    ) -> PersistedArtifacts:
         context = require_tenant_context(ctx)
         if snapshot.tenant_id != context.tenant_id:
             raise LookupError("snapshot not found")
@@ -79,7 +85,7 @@ class ExportArtifactRepository:
                 except Exception:
                     pass
             raise
-        return tuple(descriptors)
+        return PersistedArtifacts(tuple(descriptors), tuple(written_keys))
 
     def get(
         self,

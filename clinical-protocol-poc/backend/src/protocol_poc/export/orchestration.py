@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from protocol_poc.drafting.models import Claim, PassageVersion, SupportLink
 from protocol_poc.export.artifact_service import ArtifactDescriptor, ExportArtifactRepository
-from protocol_poc.export.models import ExportArtifactRecord, ExportSnapshot, SnapshotPassage
+from protocol_poc.export.models import ExportSnapshot, SnapshotPassage
 from protocol_poc.export.service import ExportService
 from protocol_poc.files.models import SourceEvidence
 from protocol_poc.files.service import FileStorage
@@ -63,16 +63,12 @@ class ExportOrchestrator:
         rendered = ArtifactService(self._renderer_version).create(
             render_snapshot, build.scorecard, template
         )
-        descriptors = ExportArtifactRepository(self._session, self._storage).persist(
+        persisted = ExportArtifactRepository(self._session, self._storage).persist(
             context, build.snapshot, rendered
         )
-        storage_keys = tuple(self._session.scalars(
-            select(ExportArtifactRecord.storage_key).where(
-                ExportArtifactRecord.tenant_id == context.tenant_id,
-                ExportArtifactRecord.id.in_([item.id for item in descriptors]),
-            )
-        ))
-        return ExportResult(build.snapshot.id, descriptors, storage_keys)
+        return ExportResult(
+            build.snapshot.id, persisted.descriptors, persisted.written_storage_keys
+        )
 
     def _render_snapshot(
         self,

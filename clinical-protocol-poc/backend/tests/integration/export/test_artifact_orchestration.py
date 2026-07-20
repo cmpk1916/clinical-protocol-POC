@@ -5,6 +5,7 @@ from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 
 from protocol_poc.db import Base
+import protocol_poc.export.artifact_service as artifact_service
 from protocol_poc.export.artifact_service import EXPECTED_FILENAMES, ExportArtifactRepository
 from protocol_poc.export.orchestration import ExportCommand, ExportOrchestrator
 from protocol_poc.export.service import ExportDenied
@@ -56,7 +57,8 @@ def test_repository_persists_and_reads_exact_tenant_scoped_artifacts(tmp_path: P
             build_template(["study_design"]),
         )
         repository = ExportArtifactRepository(session, LocalFileStorage(tmp_path))
-        descriptors = repository.persist(TenantContext("tenant-a", "writer"), snapshot, rendered)
+        persisted = repository.persist(TenantContext("tenant-a", "writer"), snapshot, rendered)
+        descriptors = persisted.descriptors
         session.commit()
 
         assert [item.name for item in descriptors] == [
@@ -74,6 +76,43 @@ def test_repository_persists_and_reads_exact_tenant_scoped_artifacts(tmp_path: P
             assert content == expected.content
             with pytest.raises(LookupError, match="not found"):
                 repository.get(TenantContext("tenant-b", "writer"), descriptor.id)
+
+
+def test_repository_returns_only_storage_keys_written_by_this_export(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        snapshot = ExportSnapshot(
+            id="snapshot-a", tenant_id="tenant-a", study_id="study-a", study_version=1,
+            renderer_version="renderer-v1",
+        )
+        session.add(snapshot)
+        session.flush()
+        rendered = ArtifactService("renderer-v1").create(
+            RenderSnapshot(snapshot.id, {"study_design": "Synthetic passage."}),
+            card(),
+            build_template(["study_design"]),
+        )
+        ids = iter(("artifact-existing", "artifact-new-1", "artifact-new-2"))
+        monkeypatch.setattr(artifact_service, "new_id", lambda: next(ids))
+        storage = LocalFileStorage(tmp_path)
+        tenant_key = __import__("hashlib").sha256(b"tenant-a").hexdigest()
+        existing_key = (
+            f"tenants/{tenant_key}/exports/{snapshot.id}/artifact-existing/protocol.docx"
+        )
+        storage.put(existing_key, rendered[0].content)
+
+        persisted = ExportArtifactRepository(session, storage).persist(
+            TenantContext("tenant-a", "writer"), snapshot, rendered
+        )
+
+        assert persisted.written_storage_keys == (
+            f"tenants/{tenant_key}/exports/{snapshot.id}/artifact-new-1/traceability.csv",
+            f"tenants/{tenant_key}/exports/{snapshot.id}/artifact-new-2/scorecard.html",
+        )
+        assert storage.get(existing_key) == rendered[0].content
 
 
 def test_repository_cleans_written_objects_when_a_later_write_fails(tmp_path: Path) -> None:

@@ -1,10 +1,20 @@
 from pathlib import Path
+import re
 
 from alembic import command
 from alembic.config import Config
 import pytest
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import IntegrityError
+
+
+def test_migration_revision_identifiers_fit_alembic_version_column() -> None:
+    revision_ids = []
+    for path in Path("migrations/versions").glob("*.py"):
+        match = re.search(r'^revision = "([^"]+)"$', path.read_text(), re.MULTILINE)
+        assert match is not None, f"migration {path.name} is missing a revision identifier"
+        revision_ids.append(match.group(1))
+    assert all(len(revision) <= 32 for revision in revision_ids)
 
 
 def test_files_migration_upgrade_constraints_and_downgrade(tmp_path: Path, monkeypatch: object) -> None:
@@ -70,7 +80,7 @@ def test_files_migration_upgrade_constraints_and_downgrade(tmp_path: Path, monke
             )
         }
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            "0012_passage_current_version_unique"
+            "0012_passage_current_unique"
         )
     assert {
         "trg_processing_attempt_terminal_update",

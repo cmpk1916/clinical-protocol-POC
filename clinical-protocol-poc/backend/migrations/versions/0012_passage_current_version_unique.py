@@ -4,7 +4,7 @@ import sqlalchemy as sa
 from alembic import op
 
 
-revision = "0012_passage_current_version_unique"
+revision = "0012_passage_current_unique"
 down_revision = "0011_passage_section_unique"
 branch_labels = None
 depends_on = None
