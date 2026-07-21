@@ -156,6 +156,65 @@ def test_synopsis_replacement_extraction_failure_keeps_current_version(
     assert current is not None and current.current_file_version_id == first.version_id
 
 
+def test_conforming_synopsis_extractor_failure_preserves_governed_state(
+    workflow: DocumentWorkflowService, session: Session, context: TenantContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    study = StudyService(session).create(context, "Synthetic Study")
+    first = workflow.upload(context, study.id, synopsis_upload("SYN-1"))
+    succeeded = workflow.process(context, study.id, first.version_id)
+    old_fact = session.scalar(select(Fact))
+    assert old_fact is not None
+    old_fact.deferred = True
+    passage = _accepted_passage(session, context, study.id, "synopsis", old_fact.id)
+    proposed = workflow.upload(context, study.id, synopsis_upload("SYN-2"))
+    session.refresh(study)
+    baseline_audits = len(session.scalars(select(AuditEvent)).all())
+    monkeypatch.setattr(workflow._extractor, "extract", lambda _: (_ for _ in ()).throw(RuntimeError("extractor down")))
+
+    with pytest.raises(ReplacementValidationError):
+        workflow.confirm_replacement(context, study.id, "synopsis", proposed.version_id, first.version_id, 1)
+
+    current = session.scalar(select(StudyInput).where(StudyInput.study_id == study.id, StudyInput.role == "synopsis"))
+    session.refresh(study)
+    session.refresh(old_fact)
+    session.refresh(passage)
+    assert current is not None and (current.current_file_version_id, current.revision) == (first.version_id, 1)
+    assert study.version == 1
+    assert (old_fact.status, old_fact.deferred, passage.status, passage.invalidation_reason) == ("candidate", True, "accepted", None)
+    assert session.get(ProcessingAttempt, succeeded.attempt_id) is not None
+    assert not session.scalars(select(ProcessingAttempt).where(ProcessingAttempt.synopsis_version_id == proposed.version_id)).all()
+    assert len(session.scalars(select(AuditEvent)).all()) == baseline_audits
+
+
+@pytest.mark.parametrize(
+    "content",
+    (
+        docx("[[SECTION:synopsis]]", "[[SECTION:objectives_endpoints]]", "[[SECTION:study_design]]", "[[SECTION:eligibility]]"),
+        docx("[[SECTION:synopsis]]", "[[SECTION:synopsis]]", "[[SECTION:objectives_endpoints]]", "[[SECTION:study_design]]", "[[SECTION:eligibility]]", "[[POC_DISCLAIMER]]"),
+    ),
+    ids=("missing-token", "duplicate-token"),
+)
+def test_invalid_template_proposals_preserve_current_governed_state(
+    workflow: DocumentWorkflowService, session: Session, context: TenantContext, content: bytes
+) -> None:
+    study = StudyService(session).create(context, "Synthetic Study")
+    current_template = workflow.upload(context, study.id, template_upload())
+    fact = Fact(tenant_id=context.tenant_id, study_id=study.id, kind="dose", status="approved")
+    session.add(fact)
+    session.flush()
+    passage = _accepted_passage(session, context, study.id, "synopsis", fact.id)
+    rejected = workflow.upload(context, study.id, UploadInput("template", "invalid.docx", DOCX_CONTENT_TYPE, content))
+    current = session.scalar(select(StudyInput).where(StudyInput.study_id == study.id, StudyInput.role == "template"))
+    session.refresh(study)
+    session.refresh(fact)
+    session.refresh(passage)
+
+    assert rejected.status == "conformance_failed"
+    assert current is not None and (current.current_file_version_id, current.revision) == (current_template.version_id, 1)
+    assert study.version == 1
+    assert (fact.status, passage.status) == ("approved", "accepted")
+
+
 def test_replacement_preview_names_both_versions_and_exact_effects(
     workflow: DocumentWorkflowService, session: Session, context: TenantContext
 ) -> None:
