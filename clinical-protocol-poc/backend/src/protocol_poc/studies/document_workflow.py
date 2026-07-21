@@ -327,6 +327,7 @@ class DocumentWorkflowService:
                 select(Study)
                 .where(Study.id == study_id, Study.tenant_id == context.tenant_id)
                 .with_for_update()
+                .execution_options(populate_existing=True)
             )
             if locked_study is None:
                 raise ReplacementNotFound("study not found")
@@ -417,7 +418,7 @@ class DocumentWorkflowService:
             StudyInput.role == role,
         )
         if for_update:
-            statement = statement.with_for_update()
+            statement = statement.with_for_update().execution_options(populate_existing=True)
         current = self._session.scalar(statement)
         if current is None:
             raise ReplacementNotFound("current input not found")

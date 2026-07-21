@@ -23,7 +23,7 @@ from protocol_poc.studies.document_workflow import (
     DocumentWorkflowService,
     ReplacementValidationError,
 )
-from protocol_poc.studies.models import Fact, ProcessingAttempt
+from protocol_poc.studies.models import Fact, ProcessingAttempt, Study
 from protocol_poc.studies.service import StudyService, StudyVersionConflict
 from protocol_poc.studies.routes import database_session
 from protocol_poc.tenancy import TenantContext
@@ -600,3 +600,83 @@ def test_replacement_rolls_back_activation_and_invalidation_on_failure(
         .where(ProcessingAttempt.synopsis_version_id == proposed.version_id)
     ).all()
     assert not session.scalars(select(AuditEvent).where(AuditEvent.event_type.in_(("input.replacement_confirmed", "passage.invalidated")))).all()
+
+
+def test_locked_recheck_refreshes_authority_after_competing_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine = create_engine(
+        f"sqlite+pysqlite:///{tmp_path / 'replacement-concurrency.db'}",
+        connect_args={"check_same_thread": False, "timeout": 2},
+    )
+    event.listen(engine, "connect", lambda connection, _: connection.execute("PRAGMA foreign_keys=ON"))
+    Base.metadata.create_all(engine)
+    storage = LocalFileStorage(tmp_path)
+    context = TenantContext("tenant", "actor")
+    with Session(engine) as setup:
+        workflow = DocumentWorkflowService(setup, IngestService(setup, storage))
+        study = StudyService(setup).create(context, "Synthetic Study")
+        current = workflow.upload(context, study.id, synopsis_upload("SYN-1"))
+        workflow.process(context, study.id, current.version_id)
+        proposed = workflow.upload(context, study.id, synopsis_upload("SYN-2"))
+        competing = workflow.upload(context, study.id, synopsis_upload("SYN-3"))
+        study_id = study.id
+        initial_fact_count = len(setup.scalars(select(Fact).where(Fact.study_id == study_id)).all())
+        initial_audit_count = len(setup.scalars(select(AuditEvent)).all())
+
+    session_a = Session(engine)
+    workflow_a = DocumentWorkflowService(session_a, IngestService(session_a, storage))
+    original_extract = workflow_a._extractor.extract
+
+    def extract_after_competing_commit(evidence: object) -> object:
+        with Session(engine) as session_b:
+            study_b = session_b.scalar(
+                select(Study).where(Study.id == study_id, Study.tenant_id == context.tenant_id)
+            )
+            current_b = session_b.scalar(
+                select(StudyInput).where(
+                    StudyInput.study_id == study_id,
+                    StudyInput.tenant_id == context.tenant_id,
+                    StudyInput.role == "synopsis",
+                )
+            )
+            assert study_b is not None and current_b is not None
+            study_b.version += 1
+            current_b.current_file_version_id = competing.version_id
+            current_b.revision += 1
+            session_b.commit()
+        return original_extract(evidence)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(workflow_a._extractor, "extract", extract_after_competing_commit)
+    try:
+        with pytest.raises(StudyVersionConflict):
+            workflow_a.confirm_replacement(
+                context,
+                study_id,
+                "synopsis",
+                proposed.version_id,
+                current.version_id,
+                1,
+            )
+    finally:
+        session_a.rollback()
+        session_a.close()
+
+    with Session(engine) as verify:
+        study_after = verify.scalar(select(Study).where(Study.id == study_id))
+        current_after = verify.scalar(
+            select(StudyInput).where(StudyInput.study_id == study_id, StudyInput.role == "synopsis")
+        )
+        assert study_after is not None and current_after is not None
+        assert study_after.version == 2
+        assert (current_after.current_file_version_id, current_after.revision) == (
+            competing.version_id,
+            2,
+        )
+        assert not verify.scalars(
+            select(ProcessingAttempt).where(
+                ProcessingAttempt.synopsis_version_id == proposed.version_id
+            )
+        ).all()
+        assert len(verify.scalars(select(Fact).where(Fact.study_id == study_id)).all()) == initial_fact_count
+        assert len(verify.scalars(select(AuditEvent)).all()) == initial_audit_count
