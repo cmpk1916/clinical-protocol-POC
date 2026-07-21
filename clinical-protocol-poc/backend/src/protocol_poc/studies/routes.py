@@ -1,5 +1,6 @@
 from collections.abc import Iterator
 from dataclasses import asdict
+from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -17,6 +18,13 @@ from protocol_poc.studies.service import (
 )
 from protocol_poc.tenancy import TenantContext
 from protocol_poc.studies.workspace import WorkspaceSummaryService
+from protocol_poc.files.service import LocalFileStorage
+from protocol_poc.ingest.service import IngestService
+from protocol_poc.studies.document_workflow import (
+    DocumentWorkflowService,
+    ReplacementNotFound,
+    ReplacementValidationError,
+)
 
 
 router = APIRouter(prefix="/api/studies")
@@ -57,6 +65,16 @@ class VersionCommand(BaseModel):
     expected_version: int = Field(ge=1)
 
 
+class ReplacementPreviewCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    proposed_version_id: str = Field(min_length=1, max_length=128)
+
+
+class ReplacementConfirmationCommand(ReplacementPreviewCommand):
+    expected_current_version_id: str = Field(min_length=1, max_length=128)
+    expected_study_version: int = Field(ge=1)
+
+
 def _study_payload(study: Study) -> dict[str, object]:
     return {
         "id": study.id,
@@ -75,6 +93,14 @@ def _raise_domain_error(error: StudyNotFound | StudyVersionConflict | StudyArchi
     if isinstance(error, StudyArchived):
         raise HTTPException(status_code=409, detail={"code": "STUDY_ARCHIVED"}) from error
     raise HTTPException(status_code=409, detail={"code": "STUDY_VERSION_CONFLICT"}) from error
+
+
+def _workflow(session: Session) -> DocumentWorkflowService:
+    settings = get_settings()
+    return DocumentWorkflowService(
+        session,
+        IngestService(session, LocalFileStorage(Path(settings.local_storage_path))),
+    )
 
 
 @router.post("")
@@ -120,6 +146,61 @@ def get_workspace(
     except StudyNotFound as error:
         _raise_domain_error(error)
     return asdict(summary)
+
+
+@router.post("/{study_id}/inputs/{role}/replacement-preview")
+def preview_replacement(
+    study_id: str,
+    role: Literal["synopsis", "template"],
+    command: ReplacementPreviewCommand,
+    request: Request,
+    session: Session = Depends(database_session),
+) -> dict[str, object]:
+    try:
+        return asdict(
+            _workflow(session).preview_replacement(
+                identity(request), study_id, role, command.proposed_version_id
+            )
+        )
+    except StudyNotFound as error:
+        _raise_domain_error(error)
+    except ReplacementNotFound as error:
+        raise HTTPException(status_code=404, detail={"code": "REPLACEMENT_NOT_FOUND"}) from error
+    except ReplacementValidationError as error:
+        raise HTTPException(status_code=422, detail={"code": "REPLACEMENT_NOT_CONFORMING"}) from error
+    except (StudyVersionConflict, StudyArchived) as error:
+        _raise_domain_error(error)
+    raise AssertionError("unreachable")
+
+
+@router.post("/{study_id}/inputs/{role}/replacement-confirmation")
+def confirm_replacement(
+    study_id: str,
+    role: Literal["synopsis", "template"],
+    command: ReplacementConfirmationCommand,
+    request: Request,
+    session: Session = Depends(database_session),
+) -> dict[str, object]:
+    try:
+        return asdict(
+            _workflow(session).confirm_replacement(
+                identity(request),
+                study_id,
+                role,
+                command.proposed_version_id,
+                command.expected_current_version_id,
+                command.expected_study_version,
+            )
+        )
+    except StudyNotFound as error:
+        _raise_domain_error(error)
+    except ReplacementNotFound as error:
+        raise HTTPException(status_code=404, detail={"code": "REPLACEMENT_NOT_FOUND"}) from error
+    except ReplacementValidationError as error:
+        raise HTTPException(status_code=422, detail={"code": "REPLACEMENT_NOT_CONFORMING"}) from error
+    except (StudyVersionConflict, StudyArchived) as error:
+        _raise_domain_error(error)
+    raise AssertionError("unreachable")
 
 
 @router.post("/{study_id}/archive")

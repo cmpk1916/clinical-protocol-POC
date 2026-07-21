@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from protocol_poc.audit.service import AuditService
 from protocol_poc.files.models import FileRecord, FileVersion, SourceEvidence, StudyInput
 from protocol_poc.ingest.service import IngestResult, IngestService, UploadInput
+from protocol_poc.review.impact_service import ImpactService
 from protocol_poc.studies.document_contract import ContractFinding, DocumentContract
 from protocol_poc.studies.local_extractor import (
     LOCAL_EXTRACTOR_VERSION,
@@ -18,9 +19,11 @@ from protocol_poc.studies.models import (
     Fact,
     FactVersion,
     ProcessingAttempt,
+    Study,
     complete_processing_attempt,
+    now,
 )
-from protocol_poc.studies.service import StudyService
+from protocol_poc.studies.service import StudyArchived, StudyService, StudyVersionConflict
 from protocol_poc.tenancy import TenantContext, require_tenant_context
 
 
@@ -56,6 +59,35 @@ class ProcessingNotFound(RuntimeError):
 
 class ProcessingConflict(RuntimeError):
     pass
+
+
+class ReplacementNotFound(RuntimeError):
+    pass
+
+
+class ReplacementValidationError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class ReplacementImpact:
+    role: str
+    current_version_id: str
+    current_filename: str
+    current_version: int
+    proposed_version_id: str
+    proposed_filename: str
+    proposed_version: int
+    conformance_status: str
+    effects: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ReplacementOutcome:
+    role: str
+    current_version_id: str
+    conformance_status: str
+    study_version: int
 
 
 class DocumentWorkflowService:
@@ -230,6 +262,205 @@ class DocumentWorkflowService:
         if current is None:
             raise ProcessingNotFound("processing attempt synopsis is no longer current")
         return self._run_processing(context, study_id, attempt.synopsis_version_id)
+
+    def preview_replacement(
+        self,
+        ctx: TenantContext,
+        study_id: str,
+        role: str,
+        proposed_version_id: str,
+    ) -> ReplacementImpact:
+        context = require_tenant_context(ctx)
+        StudyService(self._session).require_active(context, study_id)
+        current = self._current_input(context, study_id, role)
+        current_version = self._version_for_role(
+            context, study_id, role, current.current_file_version_id
+        )
+        proposed = self._version_for_role(
+            context, study_id, role, proposed_version_id
+        )
+        self._validate_proposed(context, study_id, role, proposed_version_id)
+        return ReplacementImpact(
+            role=role,
+            current_version_id=current.current_file_version_id,
+            current_filename=current_version.display_filename,
+            current_version=current_version.version,
+            proposed_version_id=proposed.id,
+            proposed_filename=proposed.display_filename,
+            proposed_version=proposed.version,
+            conformance_status="conforming",
+            effects=self._replacement_impact(role),
+        )
+
+    def confirm_replacement(
+        self,
+        ctx: TenantContext,
+        study_id: str,
+        role: str,
+        proposed_version_id: str,
+        expected_current_version_id: str,
+        expected_study_version: int,
+    ) -> ReplacementOutcome:
+        context = require_tenant_context(ctx)
+        StudyService(self._session).require_active(context, study_id)
+        self._version_for_role(context, study_id, role, proposed_version_id)
+        proposal: ExtractionProposal | None = None
+        evidence_by_id: dict[str, SourceEvidence] = {}
+        if role == "synopsis":
+            proposal, evidence_by_id = self._extract_replacement(
+                context, study_id, proposed_version_id
+            )
+        else:
+            self._validate_proposed(context, study_id, role, proposed_version_id)
+
+        # A savepoint makes the activation, candidate persistence, supersession, and
+        # passage invalidation one unit for callers that already own a transaction.
+        with self._session.begin_nested():
+            study = self._session.scalar(
+                select(Study)
+                .where(Study.id == study_id, Study.tenant_id == context.tenant_id)
+                .with_for_update()
+            )
+            if study is None:
+                raise ReplacementNotFound("study not found")
+            if study.lifecycle == "archived":
+                raise StudyArchived("study is archived")
+            if study.version != expected_study_version:
+                raise StudyVersionConflict(
+                    f"expected version {expected_study_version}, found {study.version}"
+                )
+            current = self._current_input(context, study_id, role, for_update=True)
+            if current.current_file_version_id != expected_current_version_id:
+                raise StudyVersionConflict("current input version has changed")
+            if current.current_file_version_id == proposed_version_id:
+                raise StudyVersionConflict("proposed version is already current")
+
+            new_attempt: ProcessingAttempt | None = None
+            prior_fact_ids: list[str] = []
+            if proposal is not None:
+                new_attempt = ProcessingAttempt(
+                    tenant_id=context.tenant_id,
+                    study_id=study_id,
+                    synopsis_version_id=proposed_version_id,
+                    extractor_name="local-rules",
+                    extractor_version=LOCAL_EXTRACTOR_VERSION,
+                    status="processing",
+                    findings_json=[],
+                )
+                self._session.add(new_attempt)
+                self._session.flush()
+                prior_facts = list(
+                    self._session.scalars(
+                        select(Fact).where(
+                            Fact.tenant_id == context.tenant_id,
+                            Fact.study_id == study_id,
+                            Fact.processing_attempt_id.is_not(None),
+                            Fact.processing_attempt_id != new_attempt.id,
+                        )
+                    )
+                )
+                prior_fact_ids = [fact.id for fact in prior_facts]
+                self._persist_candidates(
+                    context, study_id, new_attempt, proposal, evidence_by_id
+                )
+                for fact in prior_facts:
+                    fact.status = "superseded"
+                    fact.deferred = False
+                ImpactService(self._session).invalidate_for_facts(context, prior_fact_ids)
+                complete_processing_attempt(
+                    self._session,
+                    new_attempt,
+                    status="succeeded",
+                    error_code=None,
+                    findings_json=[],
+                )
+
+            current.current_file_version_id = proposed_version_id
+            current.conformance_status = "conforming"
+            current.revision += 1
+            study.version += 1
+            study.updated_at = now()
+            AuditService(self._session).append(
+                context,
+                "input.replacement_confirmed",
+                "study_input",
+                current.id,
+                {
+                    "role": role,
+                    "previous_file_version_id": expected_current_version_id,
+                    "current_file_version_id": proposed_version_id,
+                    "superseded_fact_ids": prior_fact_ids,
+                },
+            )
+            self._session.flush()
+            outcome = ReplacementOutcome(
+                role=role,
+                current_version_id=current.current_file_version_id,
+                conformance_status=current.conformance_status,
+                study_version=study.version,
+            )
+        return outcome
+
+    def _current_input(
+        self, ctx: TenantContext, study_id: str, role: str, *, for_update: bool = False
+    ) -> StudyInput:
+        statement = select(StudyInput).where(
+            StudyInput.tenant_id == ctx.tenant_id,
+            StudyInput.study_id == study_id,
+            StudyInput.role == role,
+        )
+        if for_update:
+            statement = statement.with_for_update()
+        current = self._session.scalar(statement)
+        if current is None:
+            raise ReplacementNotFound("current input not found")
+        return current
+
+    def _version_for_role(
+        self, ctx: TenantContext, study_id: str, role: str, version_id: str
+    ) -> FileVersion:
+        version = self._session.scalar(
+            select(FileVersion)
+            .join(FileRecord, FileRecord.id == FileVersion.file_record_id)
+            .where(
+                FileVersion.id == version_id,
+                FileVersion.tenant_id == ctx.tenant_id,
+                FileRecord.tenant_id == ctx.tenant_id,
+                FileRecord.study_id == study_id,
+                FileRecord.role == role,
+            )
+        )
+        if version is None:
+            raise ReplacementNotFound("proposed input version not found")
+        return version
+
+    def _validate_proposed(
+        self, ctx: TenantContext, study_id: str, role: str, version_id: str
+    ) -> None:
+        evidence = self._ingest.evidence_for_version(ctx, version_id)
+        findings = (
+            self._contract.validate_synopsis(evidence)
+            if role == "synopsis"
+            else self._contract.validate_template(evidence)
+        )
+        if findings:
+            raise ReplacementValidationError("proposed input is not conforming")
+
+    def _extract_replacement(
+        self, ctx: TenantContext, study_id: str, version_id: str
+    ) -> tuple[ExtractionProposal, dict[str, SourceEvidence]]:
+        self._validate_proposed(ctx, study_id, "synopsis", version_id)
+        try:
+            evidence = self._ingest.evidence_for_version(ctx, version_id)
+            proposal = self._extractor.extract(evidence)
+        except Exception as error:
+            raise ReplacementValidationError(
+                "the deterministic synopsis extractor could not complete"
+            ) from error
+        provenance_finding = self._validate_provenance(ctx, version_id, evidence, proposal)
+        if provenance_finding is not None or proposal.findings:
+            raise ReplacementValidationError("proposed synopsis extraction failed")
+        return proposal, {item.id: item for item in evidence}
 
     def _run_processing(
         self, ctx: TenantContext, study_id: str, file_version_id: str

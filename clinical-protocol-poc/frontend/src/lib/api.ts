@@ -33,6 +33,19 @@ export type ValidationFinding = { code: string; field: string; message: string }
 export type UploadOutcome = {
   status: string;
   findings: ValidationFinding[];
+  version_id?: string;
+};
+
+export type ReplacementImpact = {
+  role: "synopsis" | "template";
+  current_version_id: string;
+  current_filename: string;
+  current_version: number;
+  proposed_version_id: string;
+  proposed_filename: string;
+  proposed_version: number;
+  conformance_status: string;
+  effects: string[];
 };
 
 export type InputApi = {
@@ -41,6 +54,19 @@ export type InputApi = {
     role: "synopsis" | "template",
     file: File,
   ): Promise<{ outcome: UploadOutcome; workspace: WorkspaceSummary }>;
+  previewReplacement?(input: {
+    studyId: string;
+    role: "synopsis" | "template";
+    proposedVersionId: string;
+  }): Promise<ReplacementImpact>;
+  confirmReplacement?(input: {
+    studyId: string;
+    role: "synopsis" | "template";
+    proposedVersionId: string;
+    expectedCurrentVersionId: string;
+    expectedStudyVersion: number;
+  }): Promise<WorkspaceSummary>;
+  getWorkspace?(studyId: string): Promise<WorkspaceSummary>;
 };
 
 export type WorkspaceApi = InputApi & {
@@ -186,6 +212,34 @@ export const protocolWorkspaceApi: WorkspaceApi = {
     );
     if (!response.ok) throw new Error(await errorMessage(response, "Unable to retry processing"));
     return loadWorkspace(studyId);
+  },
+  async previewReplacement(input) {
+    const response = await fetch(
+      `/api/local/studies/${encodeURIComponent(input.studyId)}/inputs/${encodeURIComponent(input.role)}/replacement-preview`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ proposed_version_id: input.proposedVersionId }),
+      },
+    );
+    if (!response.ok) throw new Error(await errorMessage(response, "Unable to preview replacement"));
+    return await response.json() as ReplacementImpact;
+  },
+  async confirmReplacement(input) {
+    const response = await fetch(
+      `/api/local/studies/${encodeURIComponent(input.studyId)}/inputs/${encodeURIComponent(input.role)}/replacement-confirmation`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          proposed_version_id: input.proposedVersionId,
+          expected_current_version_id: input.expectedCurrentVersionId,
+          expected_study_version: input.expectedStudyVersion,
+        }),
+      },
+    );
+    if (!response.ok) throw new Error(await errorMessage(response, "Unable to confirm replacement"));
+    return loadWorkspace(input.studyId);
   },
 };
 
