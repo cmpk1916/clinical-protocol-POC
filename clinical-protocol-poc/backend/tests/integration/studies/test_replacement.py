@@ -14,6 +14,8 @@ from protocol_poc.app import create_app
 from protocol_poc.audit.models import AuditEvent
 from protocol_poc.config import Settings
 from protocol_poc.drafting.models import Passage, PassageVersion, SupportLink
+from protocol_poc.export.models import ExportArtifactRecord, SnapshotTemplate
+from protocol_poc.export.orchestration import ExportCommand, ExportOrchestrator
 from protocol_poc.files.models import StudyInput
 from protocol_poc.files.service import LocalFileStorage
 from protocol_poc.ingest.service import DOCX_CONTENT_TYPE, IngestService, UploadInput
@@ -25,6 +27,7 @@ from protocol_poc.studies.models import Fact, ProcessingAttempt
 from protocol_poc.studies.service import StudyService, StudyVersionConflict
 from protocol_poc.studies.routes import database_session
 from protocol_poc.tenancy import TenantContext
+from tests.integration.export.test_artifact_orchestration import seed_eligible_study
 
 
 
@@ -210,6 +213,15 @@ def test_invalid_template_proposals_preserve_current_governed_state(
     session.refresh(passage)
 
     assert rejected.status == "conformance_failed"
+    with pytest.raises(ReplacementValidationError, match="not conforming"):
+        workflow.confirm_replacement(
+            context,
+            study.id,
+            "template",
+            rejected.version_id,
+            current_template.version_id,
+            study.version,
+        )
     assert current is not None and (current.current_file_version_id, current.revision) == (current_template.version_id, 1)
     assert study.version == 1
     assert (fact.status, passage.status) == ("approved", "accepted")
@@ -278,6 +290,100 @@ def test_replacement_preview_and_stale_confirmation_api_contract(
     assert stale.json() == {"detail": {"code": "STUDY_VERSION_CONFLICT"}}
 
 
+def test_replacement_api_conflicts_are_prioritized_and_tenant_scoped(
+    workflow: DocumentWorkflowService,
+    session: Session,
+    context: TenantContext,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    study = StudyService(session).create(context, "Synthetic Study")
+    current = workflow.upload(context, study.id, template_upload())
+    invalid = workflow.upload(
+        context,
+        study.id,
+        UploadInput("template", "invalid.docx", DOCX_CONTENT_TYPE, docx("[[SECTION:synopsis]]")),
+    )
+    input_before = session.scalar(
+        select(StudyInput).where(StudyInput.study_id == study.id, StudyInput.role == "template")
+    )
+    assert input_before is not None
+    pointer_before = (input_before.current_file_version_id, input_before.revision)
+    settings = Settings(
+        local_storage_path=str(tmp_path),
+        allow_insecure_identity_headers=True,
+        environment="test",
+    )
+    monkeypatch.setattr("protocol_poc.studies.routes.get_settings", lambda: settings)
+    app = create_app()
+    app.dependency_overrides[database_session] = lambda: session
+    client = TestClient(app)
+    tenant_a_headers = {"X-Tenant-ID": context.tenant_id, "X-Actor-ID": context.actor_id}
+    tenant_b_headers = {"X-Tenant-ID": "tenant-b", "X-Actor-ID": "other"}
+    endpoint = f"/api/studies/{study.id}/inputs/template/replacement-confirmation"
+
+    stale_current = client.post(
+        endpoint,
+        headers=tenant_a_headers,
+        json={
+            "proposed_version_id": invalid.version_id,
+            "expected_current_version_id": "stale-current",
+            "expected_study_version": study.version,
+        },
+    )
+    stale_study = client.post(
+        endpoint,
+        headers=tenant_a_headers,
+        json={
+            "proposed_version_id": invalid.version_id,
+            "expected_current_version_id": current.version_id,
+            "expected_study_version": study.version + 1,
+        },
+    )
+    tenant_b_preview = client.post(
+        f"/api/studies/{study.id}/inputs/template/replacement-preview",
+        headers=tenant_b_headers,
+        json={"proposed_version_id": invalid.version_id},
+    )
+    tenant_b_confirmation = client.post(
+        endpoint,
+        headers=tenant_b_headers,
+        json={
+            "proposed_version_id": invalid.version_id,
+            "expected_current_version_id": current.version_id,
+            "expected_study_version": study.version,
+        },
+    )
+    invalid_preview_role = client.post(
+        f"/api/studies/{study.id}/inputs/not-a-role/replacement-preview",
+        headers=tenant_a_headers,
+        json={"proposed_version_id": invalid.version_id},
+    )
+    invalid_confirmation_role = client.post(
+        f"/api/studies/{study.id}/inputs/not-a-role/replacement-confirmation",
+        headers=tenant_a_headers,
+        json={
+            "proposed_version_id": invalid.version_id,
+            "expected_current_version_id": current.version_id,
+            "expected_study_version": study.version,
+        },
+    )
+
+    assert stale_current.status_code == 409
+    assert stale_study.status_code == 409
+    assert tenant_b_preview.status_code == 404
+    assert tenant_b_confirmation.status_code == 404
+    assert invalid_preview_role.status_code == 422
+    assert invalid_confirmation_role.status_code == 422
+    input_after = session.scalar(
+        select(StudyInput).where(StudyInput.study_id == study.id, StudyInput.role == "template")
+    )
+    session.refresh(study)
+    assert input_after is not None
+    assert (input_after.current_file_version_id, input_after.revision) == pointer_before
+    assert study.version == 1
+
+
 def test_template_replacement_preserves_facts_and_passages_and_requires_conforming_template(
     workflow: DocumentWorkflowService, session: Session, context: TenantContext
 ) -> None:
@@ -300,6 +406,92 @@ def test_template_replacement_preserves_facts_and_passages_and_requires_conformi
     assert fact.status == "candidate"
     assert passage.status == "accepted"
     assert outcome.conformance_status == "conforming"
+
+
+def test_confirmed_template_v2_is_the_exact_export_authority(
+    session: Session, tmp_path: Path
+) -> None:
+    storage = LocalFileStorage(tmp_path)
+    command = seed_eligible_study(session, storage)
+    workflow = DocumentWorkflowService(session, IngestService(session, storage))
+    context = TenantContext("tenant-a", "writer")
+    v1_marker = "Synthetic Clinical Protocol"
+    v2_marker = "Template authority marker v2"
+    proposed = workflow.upload(
+        context,
+        "study-a",
+        UploadInput(
+            "template",
+            "template-v2.docx",
+            DOCX_CONTENT_TYPE,
+            docx(
+                v2_marker,
+                "[[SECTION:synopsis]]",
+                "[[SECTION:objectives_endpoints]]",
+                "[[SECTION:study_design]]",
+                "[[SECTION:eligibility]]",
+                "[[POC_DISCLAIMER]]",
+            ),
+        ),
+    )
+    source_v1 = storage.get("tenants/template/source.docx")
+    assert source_v1 is not None
+    with ZipFile(BytesIO(source_v1)) as package:
+        assert v1_marker in package.read("word/document.xml").decode()
+    facts_before = [
+        (fact.id, fact.status, fact.current_version)
+        for fact in session.scalars(select(Fact).order_by(Fact.id))
+    ]
+    passages_before = [
+        (passage.id, passage.status, passage.current_version)
+        for passage in session.scalars(select(Passage).order_by(Passage.id))
+    ]
+
+    outcome = workflow.confirm_replacement(
+        context,
+        "study-a",
+        "template",
+        proposed.version_id,
+        command.template_version_id,
+        command.expected_study_version,
+    )
+    session.commit()
+    result = ExportOrchestrator(session, storage, "renderer-v1").create(
+        context,
+        "study-a",
+        ExportCommand(outcome.study_version, proposed.version_id, proposed.checksum_sha256),
+    )
+    session.commit()
+
+    snapshot_template = session.scalar(
+        select(SnapshotTemplate).where(SnapshotTemplate.snapshot_id == result.snapshot_id)
+    )
+    protocol = session.scalar(
+        select(ExportArtifactRecord).where(
+            ExportArtifactRecord.snapshot_id == result.snapshot_id,
+            ExportArtifactRecord.filename == "protocol.docx",
+        )
+    )
+    assert snapshot_template is not None
+    assert (snapshot_template.template_version_id, snapshot_template.content_hash) == (
+        proposed.version_id,
+        proposed.checksum_sha256,
+    )
+    assert protocol is not None
+    generated = storage.get(protocol.storage_key)
+    assert generated is not None
+    with ZipFile(BytesIO(generated)) as package:
+        document_xml = package.read("word/document.xml").decode()
+    assert v2_marker in document_xml
+    assert v1_marker not in document_xml
+    assert facts_before == [
+        (fact.id, fact.status, fact.current_version)
+        for fact in session.scalars(select(Fact).order_by(Fact.id))
+    ]
+    assert passages_before == [
+        (passage.id, passage.status, passage.current_version)
+        for passage in session.scalars(select(Passage).order_by(Passage.id))
+    ]
 
 
 def test_replacement_rejects_stale_current_or_study_versions(
@@ -376,6 +568,7 @@ def test_replacement_rolls_back_activation_and_invalidation_on_failure(
     proposed = workflow.upload(context, study.id, synopsis_upload("SYN-2"))
     session.refresh(study)
     initial_revision = session.scalar(select(StudyInput).where(StudyInput.study_id == study.id)).revision  # type: ignore[union-attr]
+    initial_fact_count = len(session.scalars(select(Fact).where(Fact.study_id == study.id)).all())
     original_append = __import__("protocol_poc.studies.document_workflow", fromlist=["AuditService"]).AuditService.append
 
     def fail_after_replacement_audit(self: object, *args: object, **kwargs: object) -> object:
@@ -400,4 +593,10 @@ def test_replacement_rolls_back_activation_and_invalidation_on_failure(
     assert current.revision == initial_revision
     assert study.version == 1
     assert not session.scalars(select(ProcessingAttempt).where(ProcessingAttempt.synopsis_version_id == proposed.version_id)).all()
+    assert len(session.scalars(select(Fact).where(Fact.study_id == study.id)).all()) == initial_fact_count
+    assert not session.scalars(
+        select(Fact)
+        .join(ProcessingAttempt, Fact.processing_attempt_id == ProcessingAttempt.id)
+        .where(ProcessingAttempt.synopsis_version_id == proposed.version_id)
+    ).all()
     assert not session.scalars(select(AuditEvent).where(AuditEvent.event_type.in_(("input.replacement_confirmed", "passage.invalidated")))).all()

@@ -150,25 +150,34 @@ def test_repository_cleans_written_objects_when_a_later_write_fails(tmp_path: Pa
 
 def seed_eligible_study(session: Session, storage: LocalFileStorage) -> ExportCommand:
     session.add(Study(id="study-a", tenant_id="tenant-a", name="Synthetic study", version=1))
+    session.flush()
     session.add(Fact(
         id="fact-dose", tenant_id="tenant-a", study_id="study-a", kind="dose",
         status="approved", critical=True,
     ))
+    session.flush()
     session.add(FactVersion(
         id="fact-dose-v1", tenant_id="tenant-a", fact_id="fact-dose", version=1,
         value_json={"value": "10", "unit": "mg"}, is_current=True,
     ))
+    session.flush()
     for section in ("synopsis", "objectives_endpoints", "study_design", "eligibility"):
         passage_id = f"passage-{section}"
-        version_id = f"version-{section}"
         session.add(Passage(
             id=passage_id, tenant_id="tenant-a", study_id="study-a",
             section=section, status="accepted",
         ))
+    session.flush()
+    for section in ("synopsis", "objectives_endpoints", "study_design", "eligibility"):
+        passage_id = f"passage-{section}"
+        version_id = f"version-{section}"
         session.add(PassageVersion(
             id=version_id, tenant_id="tenant-a", passage_id=passage_id, version=1,
             text=f"Synthetic accepted {section} passage.", placeholders=[], is_current=True,
         ))
+    session.flush()
+    for section in ("synopsis", "objectives_endpoints", "study_design", "eligibility"):
+        version_id = f"version-{section}"
         session.add(SupportLink(
             tenant_id="tenant-a", passage_version_id=version_id,
             support_type="fact", support_id="fact-dose",
@@ -182,17 +191,18 @@ def seed_eligible_study(session: Session, storage: LocalFileStorage) -> ExportCo
     session.add(FileRecord(
         id="template-file", tenant_id="tenant-a", study_id="study-a", role="template",
     ))
+    synopsis_key = "tenants/synopsis/source.docx"
+    storage.put(synopsis_key, template)
+    session.add(FileRecord(
+        id="synopsis-file", tenant_id="tenant-a", study_id="study-a", role="synopsis",
+    ))
+    session.flush()
     session.add(FileVersion(
         id="template-v1", tenant_id="tenant-a", file_record_id="template-file", version=1,
         display_filename="template.docx", checksum_sha256=template_hash,
         size_bytes=len(template),
         content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         storage_key=storage_key, status="succeeded",
-    ))
-    synopsis_key = "tenants/synopsis/source.docx"
-    storage.put(synopsis_key, template)
-    session.add(FileRecord(
-        id="synopsis-file", tenant_id="tenant-a", study_id="study-a", role="synopsis",
     ))
     session.add(FileVersion(
         id="synopsis-v1", tenant_id="tenant-a", file_record_id="synopsis-file", version=1,
@@ -201,6 +211,7 @@ def seed_eligible_study(session: Session, storage: LocalFileStorage) -> ExportCo
         content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         storage_key=synopsis_key, status="succeeded",
     ))
+    session.flush()
     session.add_all([
         StudyInput(
             tenant_id="tenant-a", study_id="study-a", role="template",
