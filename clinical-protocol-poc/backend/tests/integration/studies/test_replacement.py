@@ -11,6 +11,7 @@ from sqlalchemy.pool import StaticPool
 
 from protocol_poc.db import Base
 from protocol_poc.app import create_app
+from protocol_poc.audit.models import AuditEvent
 from protocol_poc.config import Settings
 from protocol_poc.drafting.models import Passage, PassageVersion, SupportLink
 from protocol_poc.files.models import StudyInput
@@ -111,6 +112,7 @@ def test_synopsis_replacement_supersedes_facts_and_stales_only_supported_passage
 ) -> None:
     study = StudyService(session).create(context, "Synthetic Study")
     first = workflow.upload(context, study.id, synopsis_upload("SYN-1"))
+    workflow.upload(context, study.id, template_upload())
     workflow.process(context, study.id, first.version_id)
     original_facts = list(session.scalars(select(Fact)))
     supported = _accepted_passage(session, context, study.id, "synopsis", original_facts[0].id)
@@ -255,6 +257,53 @@ def test_replacement_rejects_stale_current_or_study_versions(
     assert current is not None and current.current_file_version_id == first.version_id
 
 
+def test_stale_expected_versions_win_over_invalid_or_failed_proposals(
+    workflow: DocumentWorkflowService, session: Session, context: TenantContext
+) -> None:
+    study = StudyService(session).create(context, "Synthetic Study")
+    first = workflow.upload(context, study.id, synopsis_upload("SYN-1"))
+    invalid_template = workflow.upload(
+        context,
+        study.id,
+        UploadInput("template", "bad.docx", DOCX_CONTENT_TYPE, docx("[[SECTION:synopsis]]")),
+    )
+    assert invalid_template.status == "conformance_failed"
+
+    with pytest.raises(StudyVersionConflict):
+        workflow.confirm_replacement(
+            context, study.id, "template", invalid_template.version_id, "stale", 999
+        )
+
+    session.refresh(study)
+    current = session.scalar(select(StudyInput).where(StudyInput.study_id == study.id, StudyInput.role == "synopsis"))
+    assert current is not None and current.current_file_version_id == first.version_id
+    assert study.version == 1
+
+
+def test_batch_invalidation_audit_lists_only_facts_supporting_each_passage(
+    session: Session, context: TenantContext
+) -> None:
+    from protocol_poc.review.impact_service import ImpactService
+
+    study = StudyService(session).create(context, "Synthetic Study")
+    first = Fact(tenant_id=context.tenant_id, study_id=study.id, kind="dose", status="approved")
+    second = Fact(tenant_id=context.tenant_id, study_id=study.id, kind="endpoint", status="approved")
+    session.add_all([first, second])
+    session.flush()
+    first_passage = _accepted_passage(session, context, study.id, "synopsis", first.id)
+    second_passage = _accepted_passage(session, context, study.id, "eligibility", second.id)
+
+    ImpactService(session).invalidate_for_facts(context, [first.id, second.id])
+    session.flush()
+    audits = {
+        event.aggregate_id: event.payload_json
+        for event in session.scalars(select(AuditEvent).where(AuditEvent.event_type == "passage.invalidated"))
+    }
+
+    assert audits[first_passage.id]["fact_ids"] == [first.id]
+    assert audits[second_passage.id]["fact_ids"] == [second.id]
+
+
 def test_replacement_rolls_back_activation_and_invalidation_on_failure(
     workflow: DocumentWorkflowService, session: Session, context: TenantContext, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -263,20 +312,33 @@ def test_replacement_rolls_back_activation_and_invalidation_on_failure(
     workflow.process(context, study.id, first.version_id)
     old_fact = session.scalar(select(Fact))
     assert old_fact is not None
+    old_fact.deferred = True
     passage = _accepted_passage(session, context, study.id, "synopsis", old_fact.id)
     proposed = workflow.upload(context, study.id, synopsis_upload("SYN-2"))
+    session.refresh(study)
+    initial_revision = session.scalar(select(StudyInput).where(StudyInput.study_id == study.id)).revision  # type: ignore[union-attr]
+    original_append = __import__("protocol_poc.studies.document_workflow", fromlist=["AuditService"]).AuditService.append
 
-    def fail_after_invalidation(*_: object) -> list[Passage]:
-        raise RuntimeError("injected invalidation failure")
+    def fail_after_replacement_audit(self: object, *args: object, **kwargs: object) -> object:
+        event = original_append(self, *args, **kwargs)
+        if args[1] == "input.replacement_confirmed":
+            raise RuntimeError("injected late replacement failure")
+        return event
 
-    monkeypatch.setattr("protocol_poc.studies.document_workflow.ImpactService.invalidate_for_facts", fail_after_invalidation)
-    with pytest.raises(RuntimeError, match="injected"):
+    monkeypatch.setattr("protocol_poc.studies.document_workflow.AuditService.append", fail_after_replacement_audit)
+    with pytest.raises(RuntimeError, match="injected late"):
         workflow.confirm_replacement(context, study.id, "synopsis", proposed.version_id, first.version_id, 1)
 
     current = session.scalar(select(StudyInput).where(StudyInput.study_id == study.id))
+    session.refresh(study)
     session.refresh(old_fact)
     session.refresh(passage)
     assert current is not None and current.current_file_version_id == first.version_id
     assert old_fact.status == "candidate"
+    assert old_fact.deferred is True
     assert passage.status == "accepted"
+    assert passage.invalidation_reason is None
+    assert current.revision == initial_revision
+    assert study.version == 1
     assert not session.scalars(select(ProcessingAttempt).where(ProcessingAttempt.synopsis_version_id == proposed.version_id)).all()
+    assert not session.scalars(select(AuditEvent).where(AuditEvent.event_type.in_(("input.replacement_confirmed", "passage.invalidated")))).all()

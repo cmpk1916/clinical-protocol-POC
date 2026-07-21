@@ -302,7 +302,14 @@ class DocumentWorkflowService:
         expected_study_version: int,
     ) -> ReplacementOutcome:
         context = require_tenant_context(ctx)
-        StudyService(self._session).require_active(context, study_id)
+        study = StudyService(self._session).require_active(context, study_id)
+        if study.version != expected_study_version:
+            raise StudyVersionConflict(
+                f"expected version {expected_study_version}, found {study.version}"
+            )
+        current = self._current_input(context, study_id, role)
+        if current.current_file_version_id != expected_current_version_id:
+            raise StudyVersionConflict("current input version has changed")
         self._version_for_role(context, study_id, role, proposed_version_id)
         proposal: ExtractionProposal | None = None
         evidence_by_id: dict[str, SourceEvidence] = {}
@@ -316,18 +323,18 @@ class DocumentWorkflowService:
         # A savepoint makes the activation, candidate persistence, supersession, and
         # passage invalidation one unit for callers that already own a transaction.
         with self._session.begin_nested():
-            study = self._session.scalar(
+            locked_study = self._session.scalar(
                 select(Study)
                 .where(Study.id == study_id, Study.tenant_id == context.tenant_id)
                 .with_for_update()
             )
-            if study is None:
+            if locked_study is None:
                 raise ReplacementNotFound("study not found")
-            if study.lifecycle == "archived":
+            if locked_study.lifecycle == "archived":
                 raise StudyArchived("study is archived")
-            if study.version != expected_study_version:
+            if locked_study.version != expected_study_version:
                 raise StudyVersionConflict(
-                    f"expected version {expected_study_version}, found {study.version}"
+                    f"expected version {expected_study_version}, found {locked_study.version}"
                 )
             current = self._current_input(context, study_id, role, for_update=True)
             if current.current_file_version_id != expected_current_version_id:
@@ -378,8 +385,8 @@ class DocumentWorkflowService:
             current.current_file_version_id = proposed_version_id
             current.conformance_status = "conforming"
             current.revision += 1
-            study.version += 1
-            study.updated_at = now()
+            locked_study.version += 1
+            locked_study.updated_at = now()
             AuditService(self._session).append(
                 context,
                 "input.replacement_confirmed",
@@ -397,7 +404,7 @@ class DocumentWorkflowService:
                 role=role,
                 current_version_id=current.current_file_version_id,
                 conformance_status=current.conformance_status,
-                study_version=study.version,
+                study_version=locked_study.version,
             )
         return outcome
 
