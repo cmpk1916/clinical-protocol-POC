@@ -1,4 +1,5 @@
 import { StudyDashboard } from "../features/studies/StudyDashboard";
+import { toWorkspaceSummary, type WorkspacePayload } from "../lib/api";
 import { backendFetch } from "../lib/backend";
 import type { StudySummary } from "../lib/types";
 
@@ -9,6 +10,7 @@ type StudyPayload = {
   lifecycle: "active" | "archived";
   updated_at: string;
   archived_at: string | null;
+  workspace?: WorkspacePayload;
 };
 
 async function loadStudies(lifecycle: "active" | "archived"): Promise<StudySummary[]> {
@@ -22,6 +24,7 @@ async function loadStudies(lifecycle: "active" | "archived"): Promise<StudySumma
     lifecycle: study.lifecycle,
     updatedAt: study.updated_at,
     archivedAt: study.archived_at,
+    workspace: study.workspace ? toWorkspaceSummary(study.workspace) : undefined,
   }));
 }
 

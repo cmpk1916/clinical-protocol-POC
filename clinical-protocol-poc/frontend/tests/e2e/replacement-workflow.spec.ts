@@ -1,8 +1,10 @@
 import { expect, test } from "@playwright/test";
 
 import {
+  acceptPassages,
   createStudy,
   generateAndAcceptPassages,
+  generatePassages,
   processSynopsis,
   replacementFixture,
   reviewAllFacts,
@@ -17,7 +19,11 @@ test("synopsis replacement supersedes the current input and requires re-review",
   await processSynopsis(page);
   await page.goto(`${studyHref}/review`);
   await reviewAllFacts(page);
-  await generateAndAcceptPassages(page, studyHref);
+  await generatePassages(page, studyHref);
+  await acceptPassages(page, 3);
+  await expect(
+    page.locator("button:enabled").filter({ hasText: "Accept passage" }),
+  ).toHaveCount(1);
   await page.goto(studyHref);
 
   await page.getByLabel("Synopsis DOCX").setInputFiles(
@@ -31,9 +37,33 @@ test("synopsis replacement supersedes the current input and requires re-review",
   await expect(page.getByRole("article", { name: "Synopsis" })).toContainText("Version 2");
   await expect(page.getByRole("link", { name: /Review \d+ candidate facts/ })).toBeVisible();
 
+  await page.goto(`${studyHref}/draft`);
+  await expect(page.getByText("Stale passage: revalidate before accepting.")).toHaveCount(4);
+  await expect(
+    page.locator("button:enabled").filter({ hasText: "Accept passage" }),
+  ).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Create export" })).toBeDisabled();
+
   await page.goto(`${studyHref}/review`);
   await expect(page.locator("button:enabled").filter({ hasText: "Approve fact" }).first()).toBeVisible();
   await reviewAllFacts(page);
+
+  await page.goto(`${studyHref}/draft`);
+  for (let remaining = 4; remaining > 0; remaining -= 1) {
+    const staleAlert = page.getByText("Stale passage: revalidate before accepting.").first();
+    await staleAlert.locator("xpath=..").getByRole("button", {
+      name: "Regenerate passage",
+    }).click();
+    await expect(page.getByText("Stale passage: revalidate before accepting.")).toHaveCount(
+      remaining - 1,
+    );
+  }
+  const enabledAccept = page.locator("button:enabled").filter({ hasText: "Accept passage" });
+  await expect(enabledAccept).toHaveCount(4);
+  await acceptPassages(page, 4);
+  await expect(page.getByRole("button", { name: "Create export" })).toBeEnabled();
+  await page.getByRole("button", { name: "Create export" }).click();
+  await expect(page.getByRole("link", { name: /^Download / })).toHaveCount(3);
 });
 
 test("template replacement keeps accepted passages and enables a revalidated export", async ({ page }) => {

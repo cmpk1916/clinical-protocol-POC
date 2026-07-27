@@ -118,6 +118,21 @@ def test_workspace_derives_next_safe_action(
     assert (summary.step, summary.next_action.kind) == (step, action)
 
 
+def test_workspace_exposes_fact_review_as_an_export_blocker(
+    session: Session,
+) -> None:
+    ctx, study_id = _scenario(session, "candidate_facts")
+
+    summary = WorkspaceSummaryService(session).get(ctx, study_id)
+
+    assert [(item.code, item.message) for item in summary.blockers] == [
+        (
+            "FACT_REVIEW_INCOMPLETE",
+            "One candidate fact must be reviewed before drafting or export.",
+        )
+    ]
+
+
 def test_workspace_returns_the_current_conformed_template_export_command(
     session: Session,
 ) -> None:

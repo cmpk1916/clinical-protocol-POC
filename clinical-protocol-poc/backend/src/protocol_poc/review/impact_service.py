@@ -17,7 +17,7 @@ class ImpactService:
     def invalidate_for_facts(
         self, ctx: TenantContext, fact_ids: tuple[str, ...] | list[str]
     ) -> list[Passage]:
-        """Stale accepted passages supported by any changed fact in one batch."""
+        """Stale current passages supported by any changed fact in one batch."""
         if not fact_ids:
             return []
         statement = (
@@ -26,7 +26,6 @@ class ImpactService:
             .join(SupportLink, (SupportLink.passage_version_id == PassageVersion.id) & (SupportLink.tenant_id == PassageVersion.tenant_id))
             .where(
                 Passage.tenant_id == ctx.tenant_id,
-                Passage.status == "accepted",
                 PassageVersion.is_current.is_(True),
                 SupportLink.support_type == "fact",
                 SupportLink.support_id.in_(fact_ids),

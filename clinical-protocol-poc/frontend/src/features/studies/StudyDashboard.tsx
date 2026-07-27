@@ -2,6 +2,7 @@
 
 import React, { FormEvent, useState } from "react";
 
+import { toWorkspaceSummary, type WorkspacePayload } from "../../lib/api";
 import type { StudySummary } from "../../lib/types";
 
 type StudyPayload = {
@@ -11,6 +12,7 @@ type StudyPayload = {
   lifecycle: "active" | "archived";
   updated_at: string;
   archived_at: string | null;
+  workspace?: WorkspacePayload;
 };
 
 function toSummary(study: StudyPayload): StudySummary {
@@ -21,6 +23,7 @@ function toSummary(study: StudyPayload): StudySummary {
     lifecycle: study.lifecycle,
     updatedAt: study.updated_at,
     archivedAt: study.archived_at,
+    workspace: study.workspace ? toWorkspaceSummary(study.workspace) : undefined,
   };
 }
 
@@ -157,6 +160,19 @@ export function StudyDashboard({
                   <p className="status">{study.lifecycle}</p>
                   <h3>{study.name}</h3>
                   <p>Updated {new Date(study.updatedAt).toLocaleDateString()}</p>
+                  {study.lifecycle === "active" && study.workspace ? (
+                    <div>
+                      <p>
+                        Saved progress:{" "}
+                        {study.workspace.steps.filter((step) => step.status === "complete").length}{" "}
+                        of {study.workspace.steps.length} steps complete
+                      </p>
+                      {study.workspace.blockers.map((blocker) => (
+                        <p key={blocker.code}>Blocker: {blocker.message}</p>
+                      ))}
+                      <p>Next action: {study.workspace.nextAction.label}</p>
+                    </div>
+                  ) : null}
                 </div>
                 <div className="card-actions">
                   {study.lifecycle === "active" ? (

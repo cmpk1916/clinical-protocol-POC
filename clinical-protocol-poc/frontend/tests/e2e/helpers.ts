@@ -72,7 +72,7 @@ export async function reviewAllFacts(page: Page): Promise<void> {
   await expect(page.getByRole("status")).toContainText("All candidate facts have been reviewed.");
 }
 
-export async function generateAndAcceptPassages(page: Page, studyHref: string): Promise<void> {
+export async function generatePassages(page: Page, studyHref: string): Promise<void> {
   await page.goto(`${studyHref}/draft`);
   const generationButtons = page.getByRole("button", { name: /^Generate / });
   await expect(generationButtons).toHaveCount(4);
@@ -83,14 +83,22 @@ export async function generateAndAcceptPassages(page: Page, studyHref: string): 
     await expect(generationButtons).toHaveCount(remaining - 1);
   }
   await expect(page.getByRole("button", { name: "Accept passage" })).toHaveCount(4);
+}
+
+export async function acceptPassages(page: Page, count: number): Promise<void> {
   const enabledAcceptanceButtons = page.locator("button:enabled").filter({ hasText: "Accept passage" });
   const navigator = page.getByRole("navigation", { name: "Protocol sections" });
-  for (let remaining = 4; remaining > 0; remaining -= 1) {
-    await expect(enabledAcceptanceButtons).toHaveCount(remaining);
+  for (let accepted = 0; accepted < count; accepted += 1) {
+    await expect(enabledAcceptanceButtons).toHaveCount(4 - accepted);
     const button = enabledAcceptanceButtons.first();
     await button.click();
-    await expect(navigator).toContainText(`${5 - remaining} of 4 sections saved`);
+    await expect(navigator).toContainText(`${accepted + 1} of 4 sections saved`);
   }
+}
+
+export async function generateAndAcceptPassages(page: Page, studyHref: string): Promise<void> {
+  await generatePassages(page, studyHref);
+  await acceptPassages(page, 4);
   await expect(page.getByRole("button", { name: "Create export" })).toBeEnabled();
 }
 

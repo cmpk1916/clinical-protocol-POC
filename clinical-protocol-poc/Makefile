@@ -33,7 +33,7 @@ e2e:
 	E2E_WEB_URL=http://127.0.0.1:$(E2E_WEB_PORT) E2E_API_URL=http://127.0.0.1:$(E2E_API_PORT) pnpm exec playwright test $(E2E_TESTS)
 
 app:
-	APP_ENV=test docker compose up --build -d --wait
+	APP_ENV=development docker compose up --build -d --wait
 	@echo "Clinical Protocol POC ready: http://127.0.0.1:$${WEB_PORT:-3000}"
 
 demo:

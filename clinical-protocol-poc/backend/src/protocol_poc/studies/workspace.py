@@ -397,7 +397,17 @@ class WorkspaceSummaryService:
         if awaiting_facts:
             return (
                 "fact_review",
-                (),
+                (
+                    WorkspaceBlocker(
+                        "FACT_REVIEW_INCOMPLETE",
+                        "One candidate fact must be reviewed before drafting or export."
+                        if awaiting_facts == 1
+                        else (
+                            f"{awaiting_facts} candidate facts must be reviewed "
+                            "before drafting or export."
+                        ),
+                    ),
+                ),
                 WorkspaceAction(
                     "review_facts",
                     f"Review {awaiting_facts} candidate facts",

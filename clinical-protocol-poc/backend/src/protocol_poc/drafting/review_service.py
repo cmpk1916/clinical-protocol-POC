@@ -7,7 +7,8 @@ from protocol_poc.audit.service import AuditService
 from protocol_poc.drafting.context import DraftContextBuilder
 from protocol_poc.drafting.local_composer import LocalComposer
 from protocol_poc.drafting.models import Claim, Passage, PassageVersion, SupportLink
-from protocol_poc.studies.models import Fact, FactVersion
+from protocol_poc.files.models import StudyInput
+from protocol_poc.studies.models import Fact, FactVersion, ProcessingAttempt
 from protocol_poc.studies.service import StudyService
 from protocol_poc.tenancy import TenantContext
 from protocol_poc.validation.clinical_values import ApprovedClinicalModel
@@ -47,12 +48,57 @@ class PassageReviewService:
         version = self.session.scalar(select(PassageVersion).where(PassageVersion.passage_id == passage.id, PassageVersion.tenant_id == ctx.tenant_id, PassageVersion.is_current.is_(True)))
         if passage.status != "ready_for_review" or version is None or version.placeholders:
             raise PassageBlocked("only blocker-free, current passages can be accepted")
+        if not self._supports_are_current_approved(passage, version):
+            raise PassageBlocked(
+                "passage supports must belong to the current approved fact set"
+            )
         if any(finding.severity == "blocker" for finding in self._validate(passage, version.text)):
             raise PassageBlocked("deterministic validation produced a blocker")
         passage.status = "accepted"
         passage.invalidation_reason = None
         self.audit.append(ctx, "passage.accepted", "passage", passage.id, {"version": passage.current_version})
         return passage
+
+    def _supports_are_current_approved(
+        self, passage: Passage, version: PassageVersion
+    ) -> bool:
+        support_ids = set(self.session.scalars(
+            select(SupportLink.support_id).where(
+                SupportLink.tenant_id == passage.tenant_id,
+                SupportLink.passage_version_id == version.id,
+                SupportLink.support_type == "fact",
+            )
+        ))
+        approved_ids = set(self.session.scalars(
+            select(Fact.id)
+            .join(
+                FactVersion,
+                (FactVersion.fact_id == Fact.id)
+                & (FactVersion.tenant_id == Fact.tenant_id),
+            )
+            .join(
+                ProcessingAttempt,
+                (ProcessingAttempt.id == Fact.processing_attempt_id)
+                & (ProcessingAttempt.tenant_id == Fact.tenant_id),
+            )
+            .join(
+                StudyInput,
+                (StudyInput.study_id == Fact.study_id)
+                & (StudyInput.tenant_id == Fact.tenant_id),
+            )
+            .where(
+                Fact.tenant_id == passage.tenant_id,
+                Fact.study_id == passage.study_id,
+                Fact.status == "approved",
+                FactVersion.is_current.is_(True),
+                FactVersion.version == Fact.current_version,
+                ProcessingAttempt.status == "succeeded",
+                ProcessingAttempt.synopsis_version_id
+                == StudyInput.current_file_version_id,
+                StudyInput.role == "synopsis",
+            )
+        ))
+        return support_ids <= approved_ids
 
     def edit(self, ctx: TenantContext, passage_id: str, *, expected_version: int, text: str, support_ids: tuple[str, ...]) -> Passage:
         passage = self._passage(ctx, passage_id, expected_version)

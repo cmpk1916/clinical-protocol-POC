@@ -46,7 +46,8 @@ def seed_current_export_state(session: Session) -> None:
         extractor_version="local-rules-v1", status="succeeded", findings_json=[],
     ))
     session.add(Fact(
-        id="fact-a", tenant_id="tenant-a", study_id="study-a", kind="dose", status="approved"
+        id="fact-a", tenant_id="tenant-a", study_id="study-a",
+        processing_attempt_id="processing-v1", kind="dose", status="approved"
     ))
     session.add(FactVersion(
         id="fact-a-v1", tenant_id="tenant-a", fact_id="fact-a", version=1,

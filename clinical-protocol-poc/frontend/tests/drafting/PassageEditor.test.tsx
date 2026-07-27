@@ -60,6 +60,20 @@ describe("PassageEditor", () => {
     assert.equal(screen.getByRole("button", { name: "Accept passage" }).hasAttribute("disabled"), true);
   });
 
+  it("prevents accepting a draft until it is regenerated against current supports", () => {
+    render(
+      <PassageEditor
+        passage={{ ...blockedPassage, status: "draft", findings: [] }}
+        api={api}
+      />,
+    );
+
+    assert.equal(
+      screen.getByRole("button", { name: "Accept passage" }).hasAttribute("disabled"),
+      true,
+    );
+  });
+
   it("preserves edited text when validation returns findings", async () => {
     const user = userEvent.setup();
     render(<PassageEditor passage={{ ...blockedPassage, text: "Draft" }} api={api} />);

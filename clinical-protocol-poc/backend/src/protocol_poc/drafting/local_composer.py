@@ -16,7 +16,7 @@ class LocalComposer:
     _required = {
         "synopsis": (("study_identity", "study identity"), ("population", "study population")),
         "objectives_endpoints": (("objective", "objective"), ("endpoint", "endpoint"), ("timepoint", "endpoint timepoint")),
-        "study_design": (("arm", "arm"), ("intervention", "intervention"), ("dose", "intervention dose"), ("duration", "study duration")),
+        "study_design": (("arm", "arm"), ("intervention", "intervention"), ("dose", "intervention dose")),
         "eligibility": (("eligibility", "eligibility criteria"),),
     }
 
@@ -28,6 +28,8 @@ class LocalComposer:
         if missing:
             placeholders = tuple(f"[[REQUIRED: {label}]]" for label in missing)
             return ComposedPassage("\n".join(placeholders), (), (), placeholders)
+        if section == "study_design":
+            selected["duration"] = self._single(approved_facts, "duration")
 
         facts = {kind: item for kind, item in selected.items() if item is not None}
         fact_ids = tuple(str(item[0]) for item in facts.values())
@@ -37,7 +39,12 @@ class LocalComposer:
         elif section == "objectives_endpoints":
             text = f"The objective is to {values['objective']}; the endpoint is {values['endpoint']} at {values['timepoint']}."
         elif section == "study_design":
-            text = f"{values['arm']} receives {values['intervention']}, {values['dose']}, for {values['duration']}."
+            text = f"{values['arm']} receives {values['intervention']}, {values['dose']}"
+            text += (
+                f", for {values['duration']}."
+                if "duration" in values
+                else "."
+            )
         else:
             text = f"Eligibility is limited to {values['eligibility']}."
         return ComposedPassage(text, ({"text": text, "fact_ids": list(fact_ids)},), fact_ids)

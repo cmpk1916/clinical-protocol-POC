@@ -34,13 +34,18 @@ def test_local_composer_uses_fixed_templates_for_every_scoped_section() -> None:
     assert composer.compose("eligibility", facts).text == "Eligibility is limited to Age 18 years or older."
 
 
-def test_study_design_blocks_when_optional_duration_is_not_approved() -> None:
+def test_study_design_composes_without_optional_duration() -> None:
     facts = approved_fact_inputs()
     facts.pop("duration-a")
 
     output = LocalComposer().compose("study_design", facts)
 
-    assert output.text == "[[REQUIRED: study duration]]"
-    assert output.placeholders == ("[[REQUIRED: study duration]]",)
-    assert output.claims == ()
-    assert output.fact_ids == ()
+    assert output.text == (
+        "Arm A receives Synthetic Intervention A, 10 mg once daily."
+    )
+    assert output.placeholders == ()
+    assert output.claims == ({
+        "text": output.text,
+        "fact_ids": ["arm-a", "intervention-a", "dose-a"],
+    },)
+    assert output.fact_ids == ("arm-a", "intervention-a", "dose-a")

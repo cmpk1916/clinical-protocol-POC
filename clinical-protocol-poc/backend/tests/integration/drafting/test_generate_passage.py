@@ -21,7 +21,9 @@ def _client(tmp_path, monkeypatch) -> tuple[TestClient, object]:
     return TestClient(app), app
 
 
-def _seed_approved_facts(app: object, *, lifecycle: str = "active") -> None:
+def _seed_approved_facts(
+    app: object, *, lifecycle: str = "active", include_duration: bool = True
+) -> None:
     values = {
         "identity-a": ("study_identity", {"kind": "string", "value": "SYN-1"}),
         "population-a": ("population", {"kind": "string", "value": "Adults with synthetic condition"}),
@@ -34,6 +36,8 @@ def _seed_approved_facts(app: object, *, lifecycle: str = "active") -> None:
         "duration-a": ("duration", {"kind": "string", "value": "24 weeks"}),
         "eligibility-a": ("eligibility", {"kind": "structured_criterion", "value": {"text": "Age 18 years or older"}}),
     }
+    if not include_duration:
+        values.pop("duration-a")
     with app.state.session_factory() as session:  # type: ignore[attr-defined]
         session.add(Study(id="study-a", tenant_id="tenant-a", name="Synthetic study", lifecycle=lifecycle))
         for fact_id, (kind, value) in values.items():
@@ -58,6 +62,31 @@ def test_passage_api_generates_and_lists_exact_deterministic_support(tmp_path, m
     assert passage["status"] == "ready_for_review"
     assert passage["claims"] == [{"text": generated.json()["text"], "fact_ids": ["arm-a", "intervention-a", "dose-a", "duration-a"]}]
     assert passage["fact_support_ids"] == ["arm-a", "intervention-a", "dose-a", "duration-a"]
+    get_settings.cache_clear()
+
+
+def test_passage_api_generates_study_design_without_optional_duration(
+    tmp_path, monkeypatch
+) -> None:
+    client, app = _client(tmp_path, monkeypatch)
+    _seed_approved_facts(app, include_duration=False)
+    headers = {"X-Tenant-ID": "tenant-a", "X-Actor-ID": "writer-a"}
+
+    generated = client.post(
+        "/api/studies/study-a/passages",
+        headers=headers,
+        json={"section": "study_design"},
+    )
+
+    assert generated.status_code == 200
+    assert generated.json()["status"] == "ready_for_review"
+    assert generated.json()["text"] == (
+        "Arm A receives Synthetic Intervention A, 10 mg once daily."
+    )
+    listed = client.get("/api/studies/study-a/passages", headers=headers).json()
+    assert listed["passages"][0]["fact_support_ids"] == [
+        "arm-a", "intervention-a", "dose-a"
+    ]
     get_settings.cache_clear()
 
 

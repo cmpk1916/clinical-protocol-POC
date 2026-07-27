@@ -21,7 +21,7 @@ export function PassageEditor({
   const [findings, setFindings] = useState<PassageFinding[]>(passage.findings);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const blocked = readOnly || passage.stale || findings.length > 0 || passage.status === "blocked" || passage.status === "rejected" || passage.status === "accepted";
+  const blocked = readOnly || passage.stale || findings.length > 0 || passage.status === "draft" || passage.status === "blocked" || passage.status === "rejected" || passage.status === "accepted";
   const supportIds = passage.evidence
     .map((item) => item.replace("Approved fact support: ", ""))
     .filter((item) => item !== "");

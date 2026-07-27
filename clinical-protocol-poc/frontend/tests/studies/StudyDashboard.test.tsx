@@ -30,6 +30,46 @@ const active: StudySummary = {
   lifecycle: "active",
   updatedAt: "2026-07-17T10:00:00Z",
   archivedAt: null,
+  workspace: {
+    study: {
+      id: "study-active",
+      name: "Active Study",
+      lifecycle: "active",
+      version: 1,
+    },
+    step: "inputs",
+    readOnly: false,
+    steps: [
+      { key: "inputs", label: "Inputs", status: "blocked" },
+      { key: "processing", label: "Processing", status: "upcoming" },
+      { key: "fact_review", label: "Fact review", status: "upcoming" },
+      { key: "passage_review", label: "Passage review", status: "upcoming" },
+      { key: "export", label: "Export", status: "upcoming" },
+    ],
+    counts: {
+      candidateFacts: 0,
+      conflictedFacts: 0,
+      approvedFacts: 0,
+      acceptedPassages: 0,
+      totalPassages: 0,
+      exports: 0,
+    },
+    blockers: [
+      {
+        code: "SYNOPSIS_INPUT_MISSING",
+        message: "Upload a supported synopsis DOCX to continue.",
+      },
+    ],
+    inputs: { synopsis: null, template: null },
+    processing: null,
+    nextAction: {
+      kind: "upload_synopsis",
+      label: "Upload synopsis",
+      targetId: null,
+      href: null,
+    },
+    exportCommand: null,
+  },
 };
 
 describe("StudyDashboard", () => {
@@ -141,6 +181,24 @@ describe("StudyDashboard", () => {
     assert.match(page, /not for clinical use/i);
     assert.match(page, /not for regulatory use/i);
     assert.match(page, /not submission-ready/i);
+  });
+
+  it("shows server-derived saved progress, blockers, and next action for active studies", async () => {
+    render(<StudyDashboard initialActive={[active]} initialArchived={[archived]} />);
+    const activeCard = screen.getByText("Active Study").closest("article");
+    assert.ok(activeCard);
+    assert.match(activeCard.textContent ?? "", /Saved progress: 0 of 5 steps complete/);
+    assert.match(
+      activeCard.textContent ?? "",
+      /Blocker: Upload a supported synopsis DOCX to continue\./,
+    );
+    assert.match(activeCard.textContent ?? "", /Next action: Upload synopsis/);
+
+    await userEvent.click(screen.getByRole("tab", { name: "Archived" }));
+    const archivedCard = screen.getByText("Archived Study").closest("article");
+    assert.ok(archivedCard);
+    assert.doesNotMatch(archivedCard.textContent ?? "", /Next action:/);
+    assert.ok(within(archivedCard).getByRole("button", { name: "Restore Archived Study" }));
   });
 
   it("states every proof-of-concept limitation when there are no studies", () => {

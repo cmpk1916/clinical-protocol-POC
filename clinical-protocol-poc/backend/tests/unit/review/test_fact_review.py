@@ -74,6 +74,10 @@ def test_critical_fact_requires_explicit_confirmation(session: Session) -> None:
         FactReviewService(session).approve(TenantContext("tenant-a", "writer-a"), fact.id, expected_version=1, explicitly_confirmed=False)
 
 
+def test_duration_fact_reports_study_design_downstream_impact() -> None:
+    assert FactReviewService._downstream_impact("duration") == ("study_design",)
+
+
 def test_conflicting_candidate_cannot_be_approved(session: Session) -> None:
     fact = add_fact(session, fact_id="conflict", status="conflicted")
     with pytest.raises(UnresolvedConflict):

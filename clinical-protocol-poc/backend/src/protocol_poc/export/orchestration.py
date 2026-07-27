@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from protocol_poc.drafting.models import Claim, PassageVersion, SupportLink
 from protocol_poc.export.artifact_service import ArtifactDescriptor, ExportArtifactRepository
-from protocol_poc.export.models import ExportSnapshot, SnapshotPassage
+from protocol_poc.export.models import ExportSnapshot, SnapshotFact, SnapshotPassage
 from protocol_poc.export.service import ExportService
 from protocol_poc.files.models import SourceEvidence
 from protocol_poc.files.service import FileStorage
@@ -82,6 +82,15 @@ class ExportOrchestrator:
             )
         ))
         passages = {item.section: item.text for item in snapshot_passages}
+        snapshot_facts = {
+            item.source_fact_id: item
+            for item in self._session.scalars(
+                select(SnapshotFact).where(
+                    SnapshotFact.tenant_id == ctx.tenant_id,
+                    SnapshotFact.snapshot_id == snapshot.id,
+                )
+            )
+        }
         rows: list[dict[str, str]] = []
         for item in snapshot_passages:
             version = self._session.scalar(
@@ -110,16 +119,29 @@ class ExportOrchestrator:
             ))
             fact_ids = [link.support_id for link in links if link.support_type == "fact"]
             guidance_ids = [link.support_id for link in links if link.support_type == "guidance"]
-            facts = list(self._session.scalars(
+            frozen_facts = [
+                snapshot_facts[fact_id]
+                for fact_id in fact_ids
+                if fact_id in snapshot_facts
+            ]
+            version_history = list(self._session.scalars(
                 select(FactVersion).where(
                     FactVersion.tenant_id == ctx.tenant_id,
                     FactVersion.fact_id.in_(fact_ids),
-                    FactVersion.is_current.is_(True),
                 )
             )) if fact_ids else []
+            versions_by_source = {
+                (version.fact_id, version.version): version
+                for version in version_history
+            }
+            facts = [
+                versions_by_source[(fact.source_fact_id, fact.source_version)]
+                for fact in frozen_facts
+                if (fact.source_fact_id, fact.source_version) in versions_by_source
+            ]
             fact_value = "; ".join(
                 json.dumps(fact.value_json, sort_keys=True, separators=(",", ":"))
-                for fact in facts
+                for fact in frozen_facts
             )
             evidence_location = self._evidence_locations(ctx, facts)
             for claim in claims:

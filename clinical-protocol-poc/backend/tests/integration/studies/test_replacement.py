@@ -135,6 +135,30 @@ def test_synopsis_replacement_supersedes_facts_and_stales_only_supported_passage
     assert {fact.status for fact in session.scalars(select(Fact))} == {"candidate", "superseded"}
 
 
+def test_synopsis_replacement_stales_ready_for_review_passage_with_superseded_support(
+    workflow: DocumentWorkflowService, session: Session, context: TenantContext
+) -> None:
+    study = StudyService(session).create(context, "Synthetic Study")
+    first = workflow.upload(context, study.id, synopsis_upload("SYN-1"))
+    workflow.process(context, study.id, first.version_id)
+    original_fact = session.scalar(select(Fact))
+    assert original_fact is not None
+    passage = _accepted_passage(
+        session, context, study.id, "study_design", original_fact.id
+    )
+    passage.status = "ready_for_review"
+    session.commit()
+    proposed = workflow.upload(context, study.id, synopsis_upload("SYN-2"))
+
+    workflow.confirm_replacement(
+        context, study.id, "synopsis", proposed.version_id, first.version_id, 1
+    )
+
+    session.refresh(passage)
+    assert passage.status == "stale"
+    assert passage.invalidation_reason == "supporting_fact_changed"
+
+
 def test_synopsis_replacement_extraction_failure_keeps_current_version(
     workflow: DocumentWorkflowService, session: Session, context: TenantContext
 ) -> None:

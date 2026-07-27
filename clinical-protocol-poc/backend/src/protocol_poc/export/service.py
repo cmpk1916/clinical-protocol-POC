@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from protocol_poc.audit.service import AuditService
-from protocol_poc.drafting.models import Passage, PassageVersion
+from protocol_poc.drafting.models import Passage, PassageVersion, SupportLink
 from protocol_poc.export.gate import ExportGate, ExportState
 from protocol_poc.export.models import ExportSnapshot, SnapshotFact, SnapshotPassage, SnapshotTemplate
 from protocol_poc.files.models import FileVersion, StudyInput
@@ -177,11 +177,15 @@ class ExportService:
         ))
         if synopsis is None or not any(item.status == "succeeded" for item in attempts):
             state.add_blocker("INPUT_PROCESSING_INCOMPLETE")
+        active_attempt_ids = {
+            item.id for item in attempts if item.status == "succeeded"
+        }
 
         facts = list(self.session.scalars(
             select(Fact).where(
                 Fact.tenant_id == ctx.tenant_id,
                 Fact.study_id == study_id,
+                Fact.processing_attempt_id.in_(active_attempt_ids),
                 Fact.status.in_(("approved", "candidate", "conflicted")),
             ).with_for_update()
         ))
@@ -209,7 +213,12 @@ class ExportService:
                 PassageVersion.is_current.is_(True),
             ).with_for_update()
         )) if passages else []
-        passage_pairs = self._current_passage_pairs(passages, versions, state)
+        passage_pairs = self._current_passage_pairs(
+            passages,
+            versions,
+            {fact.id for fact, _version in fact_pairs},
+            state,
+        )
         return template, fact_pairs, passage_pairs
 
     def _current_template(
@@ -263,6 +272,7 @@ class ExportService:
         self,
         passages: list[Passage],
         versions: list[PassageVersion],
+        approved_fact_ids: set[str],
         state: ExportState,
     ) -> list[tuple[Passage, PassageVersion]]:
         by_passage: dict[str, list[PassageVersion]] = {}
@@ -282,4 +292,16 @@ class ExportService:
                 state.add_blocker("PASSAGE_REVIEW_INCOMPLETE")
                 return []
             pairs.append((passage, current[0]))
+        supported_fact_ids = set(self.session.scalars(
+            select(SupportLink.support_id).where(
+                SupportLink.tenant_id == passages[0].tenant_id,
+                SupportLink.passage_version_id.in_(
+                    [version.id for _passage, version in pairs]
+                ),
+                SupportLink.support_type == "fact",
+            )
+        ))
+        if not supported_fact_ids <= approved_fact_ids:
+            state.add_blocker("PASSAGE_REVIEW_INCOMPLETE")
+            return []
         return pairs

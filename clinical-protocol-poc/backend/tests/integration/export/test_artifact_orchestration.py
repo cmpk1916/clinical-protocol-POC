@@ -8,7 +8,7 @@ from protocol_poc.db import Base
 import protocol_poc.export.artifact_service as artifact_service
 from protocol_poc.export.artifact_service import EXPECTED_FILENAMES, ExportArtifactRepository
 from protocol_poc.export.orchestration import ExportCommand, ExportOrchestrator
-from protocol_poc.export.service import ExportDenied
+from protocol_poc.export.service import ExportDenied, ExportService
 from protocol_poc.export.models import ExportArtifactRecord, ExportSnapshot, SnapshotPassage
 from protocol_poc.files.models import FileRecord, FileVersion, StudyInput
 from protocol_poc.files.service import LocalFileStorage
@@ -151,10 +151,11 @@ def test_repository_cleans_written_objects_when_a_later_write_fails(tmp_path: Pa
 def seed_eligible_study(session: Session, storage: LocalFileStorage) -> ExportCommand:
     session.add(Study(id="study-a", tenant_id="tenant-a", name="Synthetic study", version=1))
     session.flush()
-    session.add(Fact(
+    fact = Fact(
         id="fact-dose", tenant_id="tenant-a", study_id="study-a", kind="dose",
         status="approved", critical=True,
-    ))
+    )
+    session.add(fact)
     session.flush()
     session.add(FactVersion(
         id="fact-dose-v1", tenant_id="tenant-a", fact_id="fact-dose", version=1,
@@ -227,6 +228,8 @@ def seed_eligible_study(session: Session, storage: LocalFileStorage) -> ExportCo
             extractor_version="local-rules-v1", status="succeeded", findings_json=[],
         ),
     ])
+    session.flush()
+    fact.processing_attempt_id = "processing-v1"
     session.commit()
     return ExportCommand(1, "template-v1", template_hash)
 
@@ -285,6 +288,7 @@ def test_orchestrator_fails_closed_for_invalid_template(
         ("unprocessed_synopsis", "INPUT_PROCESSING_INCOMPLETE"),
         ("candidate_fact", "FACT_REVIEW_INCOMPLETE"),
         ("stale_passage", "STALE_PASSAGE"),
+        ("stale_support", "PASSAGE_REVIEW_INCOMPLETE"),
         ("noncurrent_template", "TEMPLATE_VERSION_INVALID"),
     ],
 )
@@ -312,6 +316,16 @@ def test_orchestrator_rechecks_current_workspace_authority_before_export(
             passage = session.get(Passage, "passage-eligibility")
             assert passage is not None
             passage.status = "stale"
+        elif change == "stale_support":
+            fact = session.get(Fact, "fact-dose")
+            assert fact is not None
+            session.add(ProcessingAttempt(
+                id="processing-old", tenant_id="tenant-a", study_id="study-a",
+                synopsis_version_id="synopsis-old", extractor_name="local-rules",
+                extractor_version="local-rules-v1", status="succeeded",
+                findings_json=[],
+            ))
+            fact.processing_attempt_id = "processing-old"
         else:
             current = session.scalar(select(StudyInput).where(StudyInput.role == "template"))
             assert current is not None
@@ -326,6 +340,45 @@ def test_orchestrator_rechecks_current_workspace_authority_before_export(
         assert expected in captured.value.codes
         session.rollback()
         assert session.scalars(select(ExportArtifactRecord)).all() == []
+
+
+def test_traceability_uses_frozen_snapshot_fact_value_after_current_version_changes(
+    tmp_path: Path,
+) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    storage = LocalFileStorage(tmp_path)
+    with Session(engine) as session:
+        command = seed_eligible_study(session, storage)
+        build = ExportService(session).create_snapshot_build(
+            TenantContext("tenant-a", "writer"),
+            "study-a",
+            expected_study_version=command.expected_study_version,
+            template_version_id=command.template_version_id,
+            template_hash=command.template_hash,
+            renderer_version="renderer-v1",
+        )
+        old_version = session.get(FactVersion, "fact-dose-v1")
+        assert old_version is not None
+        old_version.is_current = False
+        session.add(FactVersion(
+            id="fact-dose-v2", tenant_id="tenant-a", fact_id="fact-dose", version=2,
+            value_json={"value": "20", "unit": "mg"}, is_current=True,
+        ))
+        fact = session.get(Fact, "fact-dose")
+        assert fact is not None
+        fact.current_version = 2
+        session.flush()
+
+        rendered = ExportOrchestrator(
+            session, storage, "renderer-v1"
+        )._render_snapshot(TenantContext("tenant-a", "writer"), build.snapshot)
+
+        assert rendered.traceability_rows
+        assert all(
+            row["fact_value"] == '{"unit":"mg","value":"10"}'
+            for row in rendered.traceability_rows
+        )
 
 
 def test_orchestrator_rolls_back_when_authorized_template_storage_is_missing(

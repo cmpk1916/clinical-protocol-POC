@@ -118,8 +118,17 @@ def list_studies(
     lifecycle: Literal["active", "archived"] = "active",
     session: Session = Depends(database_session),
 ) -> dict[str, object]:
-    studies = StudyService(session).list(identity(request), lifecycle)
-    return {"items": [_study_payload(study) for study in studies]}
+    context = identity(request)
+    studies = StudyService(session).list(context, lifecycle)
+    items = []
+    for study in studies:
+        payload = _study_payload(study)
+        if study.lifecycle == "active":
+            payload["workspace"] = asdict(
+                WorkspaceSummaryService(session).get(context, study.id)
+            )
+        items.append(payload)
+    return {"items": items}
 
 
 @router.get("/{study_id}")

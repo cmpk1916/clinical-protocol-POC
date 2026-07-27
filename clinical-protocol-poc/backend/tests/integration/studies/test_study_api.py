@@ -47,6 +47,28 @@ def test_tenant_cannot_load_another_tenants_study(tmp_path: Path, monkeypatch: o
     get_settings.cache_clear()
 
 
+def test_active_list_includes_server_derived_workspace_progress_and_next_action(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    api = client(tmp_path, monkeypatch)
+    created = api.post(
+        "/api/studies", json={"name": "Synthetic Alpha"}, headers=headers()
+    ).json()
+
+    response = api.get("/api/studies?lifecycle=active", headers=headers())
+
+    assert response.status_code == 200
+    item = response.json()["items"][0]
+    assert item["id"] == created["id"]
+    assert item["workspace"]["step"] == "inputs"
+    assert item["workspace"]["blockers"][0]["code"] == "SYNOPSIS_INPUT_MISSING"
+    assert item["workspace"]["next_action"]["kind"] == "upload_synopsis"
+    assert [step["status"] for step in item["workspace"]["steps"]] == [
+        "blocked", "upcoming", "upcoming", "upcoming", "upcoming"
+    ]
+    get_settings.cache_clear()
+
+
 def test_lifecycle_filtering_archive_conflict_and_restore(tmp_path: Path, monkeypatch: object) -> None:
     api = client(tmp_path, monkeypatch)
     first = api.post("/api/studies", json={"name": "Synthetic Alpha"}, headers=headers()).json()

@@ -34,11 +34,14 @@ services:
       MINIO_ENDPOINT: ${MINIO_ENDPOINT:-http://minio:9000}
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
-      APP_ENV: ${APP_ENV:-test}
+      LOCAL_STORAGE_PATH: /var/lib/protocol-poc/storage
+      APP_ENV: ${APP_ENV:-development}
       ENVIRONMENT: ${ENVIRONMENT:-development}
       ALLOW_INSECURE_IDENTITY_HEADERS: ${ALLOW_INSECURE_IDENTITY_HEADERS:-true}
     ports:
       - "127.0.0.1:${API_PORT:-8000}:8000"
+    volumes:
+      - protocol-storage:/var/lib/protocol-poc/storage
     depends_on:
       postgres:
         condition: service_healthy
@@ -70,3 +73,4 @@ services:
 volumes:
   postgres-data:
   minio-data:
+  protocol-storage:

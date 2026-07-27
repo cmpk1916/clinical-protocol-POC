@@ -126,7 +126,8 @@ def test_s3_ambiguous_different_checksum_is_collision() -> None:
 def test_local_storage_reads_exact_bytes_and_missing_is_none(tmp_path: Path) -> None:
     storage = LocalFileStorage(tmp_path)
     storage.put("tenant/artifact.bin", b"exact bytes")
-    assert storage.get("tenant/artifact.bin") == b"exact bytes"
+    restarted_storage = LocalFileStorage(tmp_path)
+    assert restarted_storage.get("tenant/artifact.bin") == b"exact bytes"
     assert storage.get("tenant/missing.bin") is None
     with pytest.raises(ValueError, match="invalid storage key"):
         storage.get("../escape")

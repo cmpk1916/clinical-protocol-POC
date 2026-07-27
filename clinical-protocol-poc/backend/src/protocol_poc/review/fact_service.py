@@ -365,6 +365,7 @@ class FactReviewService:
             "arm": ("study_design",),
             "intervention": ("study_design",),
             "dose": ("study_design",),
+            "duration": ("study_design",),
             "eligibility": ("eligibility",),
         }
         return by_kind.get(kind, ())

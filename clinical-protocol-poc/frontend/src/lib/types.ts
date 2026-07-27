@@ -7,6 +7,7 @@ export type StudySummary = {
   lifecycle: "active" | "archived";
   updatedAt: string;
   archivedAt: string | null;
+  workspace?: WorkspaceSummary;
 };
 
 export type ReviewItem = {

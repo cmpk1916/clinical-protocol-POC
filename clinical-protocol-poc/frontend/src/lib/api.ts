@@ -74,7 +74,7 @@ export type WorkspaceApi = InputApi & {
   retryProcessing(studyId: string, attemptId: string): Promise<WorkspaceSummary>;
 };
 
-type WorkspacePayload = {
+export type WorkspacePayload = {
   study: WorkspaceSummary["study"];
   step: WorkspaceSummary["step"];
   read_only: boolean;
