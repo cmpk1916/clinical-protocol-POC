@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import React from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { PassageEditor } from "../../src/features/drafting/PassageEditor";
@@ -54,6 +54,12 @@ describe("PassageEditor", () => {
     assert.equal(screen.getByRole("button", { name: "Accept passage" }).hasAttribute("disabled"), true);
   });
 
+  it("prevents re-accepting a passage that is already accepted", () => {
+    render(<PassageEditor passage={{ ...blockedPassage, status: "accepted", findings: [] }} api={api} />);
+
+    assert.equal(screen.getByRole("button", { name: "Accept passage" }).hasAttribute("disabled"), true);
+  });
+
   it("preserves edited text when validation returns findings", async () => {
     const user = userEvent.setup();
     render(<PassageEditor passage={{ ...blockedPassage, text: "Draft" }} api={api} />);
@@ -90,6 +96,39 @@ describe("PassageEditor", () => {
     assert.deepEqual(calls, [{ passageId: "passage-dose", action: "accept", expectedVersion: 3 }]);
     const authoritativePassage = refreshed as DraftPassage | null;
     assert.equal(authoritativePassage?.status, "accepted");
+  });
+
+  it("keeps the passage busy until the authoritative parent refresh completes", async () => {
+    const user = userEvent.setup();
+    let resolveRefresh: (() => void) | undefined;
+    const ready: DraftPassage = {
+      ...blockedPassage,
+      status: "valid",
+      findings: [],
+      text: "Participants receive 10 mg once daily.",
+      version: 3,
+    };
+    const commandApi = {
+      ...api,
+      async reviewPassage() {
+        return { ...ready, status: "accepted" as const };
+      },
+    };
+
+    render(
+      <PassageEditor
+        passage={ready}
+        api={commandApi}
+        onUpdated={() => new Promise<void>((resolve) => { resolveRefresh = resolve; })}
+      />,
+    );
+    const acceptance = user.click(screen.getByRole("button", { name: "Accept passage" }));
+
+    assert.equal((await screen.findByRole("status")).textContent, "Saving passage review…");
+    assert.ok(resolveRefresh);
+    resolveRefresh();
+    await acceptance;
+    await waitFor(() => assert.equal(screen.queryByRole("status"), null));
   });
 
   it("keeps archived passage review viewable but disables every mutation", () => {

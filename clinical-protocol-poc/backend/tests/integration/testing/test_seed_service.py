@@ -5,8 +5,8 @@ from sqlalchemy.orm import Session
 
 from protocol_poc.db import Base
 from protocol_poc.files.service import LocalFileStorage
-from protocol_poc.files.models import SourceEvidence
-from protocol_poc.studies.models import Fact, FactVersion, Study
+from protocol_poc.files.models import SourceEvidence, StudyInput
+from protocol_poc.studies.models import Fact, FactVersion, ProcessingAttempt, Study
 from protocol_poc.testing.seed_service import seed_synthetic_study
 
 
@@ -29,7 +29,13 @@ def test_seed_service_inserts_foreign_key_parents_before_children(tmp_path: Path
         session.commit()
 
         assert session.scalar(select(Study).where(Study.id == "synthetic-phase-2"))
-        assert session.scalar(select(Fact).where(Fact.id == "fact-dose"))
+        fact = session.scalar(select(Fact).where(Fact.id == "fact-dose"))
+        assert fact is not None
+        assert fact.status == "candidate"
+        assert {item.role for item in session.scalars(select(StudyInput))} == {"synopsis", "template"}
+        attempt = session.scalar(select(ProcessingAttempt).where(ProcessingAttempt.study_id == "synthetic-phase-2"))
+        assert attempt is not None
+        assert attempt.status == "succeeded"
         fact_version = session.scalar(
             select(FactVersion).where(FactVersion.id == "fact-dose-v1")
         )

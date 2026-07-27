@@ -104,6 +104,8 @@ export function ReviewQueue({ studyId, api = protocolReviewApi }: Readonly<Props
     }
   };
 
+  const reviewActionsLocked = queue.readOnly || busyFactId !== null || pendingApproval !== null;
+
   return (
     <section aria-labelledby="review-queue-heading">
       <h1 id="review-queue-heading">Guided Review</h1>
@@ -143,7 +145,7 @@ export function ReviewQueue({ studyId, api = protocolReviewApi }: Readonly<Props
                 {item.status === "deferred" ? (
                   <button
                     type="button"
-                    disabled={queue.readOnly || item.evidenceValid === false || busyFactId === item.id}
+                    disabled={reviewActionsLocked || item.evidenceValid === false}
                     onClick={() => void review(item, "resume")}
                   >
                     Resume review
@@ -166,9 +168,8 @@ export function ReviewQueue({ studyId, api = protocolReviewApi }: Readonly<Props
                     <button
                       type="button"
                       disabled={
-                        queue.readOnly
+                        reviewActionsLocked
                         || item.evidenceValid === false
-                        || busyFactId === item.id
                         || !(conflictRationales[item.id] ?? "").trim()
                       }
                       onClick={() => void review(
@@ -182,11 +183,11 @@ export function ReviewQueue({ studyId, api = protocolReviewApi }: Readonly<Props
                   </>
                 ) : (
                   <>
-                    <button type="button" disabled={queue.readOnly || item.evidenceValid === false || busyFactId === item.id} onClick={() => approve(item)}>
+                    <button type="button" disabled={reviewActionsLocked || item.evidenceValid === false} onClick={() => approve(item)}>
                       Approve fact
                     </button>
-                    <button type="button" disabled={queue.readOnly || item.evidenceValid === false || busyFactId === item.id} onClick={() => void review(item, "reject")}>Reject fact</button>
-                    <button type="button" disabled={queue.readOnly || item.evidenceValid === false || busyFactId === item.id} onClick={() => void review(item, "defer")}>Defer fact</button>
+                    <button type="button" disabled={reviewActionsLocked || item.evidenceValid === false} onClick={() => void review(item, "reject")}>Reject fact</button>
+                    <button type="button" disabled={reviewActionsLocked || item.evidenceValid === false} onClick={() => void review(item, "defer")}>Defer fact</button>
                   </>
                 )}
               </menu>

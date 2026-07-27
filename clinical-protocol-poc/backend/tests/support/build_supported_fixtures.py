@@ -21,8 +21,6 @@ def _paragraph(text: str, style: str | None = None) -> str:
 
 def build_synopsis() -> bytes:
     paragraphs = (
-        _paragraph("Self-service synthetic study synopsis", "POCTitle"),
-        _paragraph("Synthetic-only evaluation fixture; not for clinical, regulatory, or submission use.", "POCDisclaimer"),
         _paragraph("Study identity", "Heading1"),
         _paragraph("Short title: SELF-24"),
         _paragraph("Objectives", "Heading1"),

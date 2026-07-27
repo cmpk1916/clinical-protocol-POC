@@ -48,41 +48,48 @@ export async function uploadSupportedInputs(page: Page): Promise<void> {
   await expect(page.getByRole("button", { name: "Process synopsis" })).toBeVisible();
 }
 
-export async function processAndReviewFacts(page: Page, studyHref: string): Promise<void> {
+export async function processSynopsis(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Process synopsis" }).click();
   await expect(page.getByRole("link", { name: /Review \d+ candidate facts/ })).toBeVisible();
-  await page.goto(`${studyHref}/review`);
+}
+
+export async function reviewAllFacts(page: Page): Promise<void> {
   await expect(page.getByRole("heading", { name: "Guided Review" })).toBeVisible();
 
-  while (await page.getByRole("button", { name: "Approve fact" }).count()) {
-    await page.getByRole("button", { name: "Approve fact" }).first().click();
+  const enabledApprovalButtons = page.locator("button:enabled").filter({ hasText: "Approve fact" });
+  const approvals = await enabledApprovalButtons.count();
+  expect(approvals).toBeGreaterThan(0);
+  for (let remaining = approvals; remaining > 0; remaining -= 1) {
+    await expect(enabledApprovalButtons).toHaveCount(remaining);
+    await enabledApprovalButtons.first().click();
     const confirmation = page.getByLabel("I explicitly confirm this critical fact");
     if (await confirmation.count()) {
       await confirmation.check();
       await page.getByRole("button", { name: "Confirm approval" }).click();
     }
-    await expect(
-      page.getByRole("button", { name: "Approve fact" }).or(page.getByRole("status")).first(),
-    ).toBeVisible();
+    await expect.poll(async () => enabledApprovalButtons.count()).toBe(remaining - 1);
   }
   await expect(page.getByRole("status")).toContainText("All candidate facts have been reviewed.");
 }
 
 export async function generateAndAcceptPassages(page: Page, studyHref: string): Promise<void> {
   await page.goto(`${studyHref}/draft`);
-  while (await page.getByRole("button", { name: /^Generate / }).count()) {
-    const button = page.getByRole("button", { name: /^Generate / }).first();
-    const label = await button.textContent();
-    expect(label).toBeTruthy();
+  const generationButtons = page.getByRole("button", { name: /^Generate / });
+  await expect(generationButtons).toHaveCount(4);
+  for (let remaining = 4; remaining > 0; remaining -= 1) {
+    await expect(generationButtons).toHaveCount(remaining);
+    const button = generationButtons.first();
     await button.click();
-    await expect(page.getByRole("button", { name: label! })).toHaveCount(0);
+    await expect(generationButtons).toHaveCount(remaining - 1);
   }
   await expect(page.getByRole("button", { name: "Accept passage" })).toHaveCount(4);
-  while (await page.locator("button:enabled").filter({ hasText: "Accept passage" }).count()) {
-    const button = page.locator("button:enabled").filter({ hasText: "Accept passage" }).first();
-    const count = await page.locator("button:enabled").filter({ hasText: "Accept passage" }).count();
+  const enabledAcceptanceButtons = page.locator("button:enabled").filter({ hasText: "Accept passage" });
+  const navigator = page.getByRole("navigation", { name: "Protocol sections" });
+  for (let remaining = 4; remaining > 0; remaining -= 1) {
+    await expect(enabledAcceptanceButtons).toHaveCount(remaining);
+    const button = enabledAcceptanceButtons.first();
     await button.click();
-    await expect.poll(async () => page.locator("button:enabled").filter({ hasText: "Accept passage" }).count()).toBe(count - 1);
+    await expect(navigator).toContainText(`${5 - remaining} of 4 sections saved`);
   }
   await expect(page.getByRole("button", { name: "Create export" })).toBeEnabled();
 }
@@ -101,14 +108,16 @@ export async function seedScenario(
 }
 
 export async function reviewAllRequiredFacts(page: Page): Promise<void> {
-  await expect(page.getByText(/Export blocked: 1 critical fact/)).toBeVisible();
+  await expect(page.getByText("Dose requires review before export.")).toBeVisible();
   await page.getByRole("button", { name: "Approve fact" }).click();
   await page.getByLabel("I explicitly confirm this critical fact").check();
   await page.getByRole("button", { name: "Confirm approval" }).click();
+  await expect(page.getByRole("status")).toContainText("All candidate facts have been reviewed.");
 }
 
 export async function acceptAllValidPassages(page: Page): Promise<void> {
-  const button = page.getByRole("button", { name: "Accept passage" });
+  const button = page.locator("button:enabled").filter({ hasText: "Accept passage" });
+  await expect(button).toHaveCount(1);
   await expect(button).toBeEnabled();
   await button.click();
 }

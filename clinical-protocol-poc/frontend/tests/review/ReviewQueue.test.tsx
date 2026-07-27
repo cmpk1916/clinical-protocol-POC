@@ -64,6 +64,40 @@ describe("ReviewQueue", () => {
     assert.ok(await screen.findByText("All candidate facts have been reviewed."));
   });
 
+  it("locks other critical reviews while an approval refresh is in flight", async () => {
+    let resolveApproval: ((payload: Awaited<ReturnType<ReviewApi["approveFact"]>>) => void) | undefined;
+    const secondCriticalFact = {
+      ...(await criticalFactApi.getReviewQueue("study-1")).items[0]!,
+      id: "fact-eligibility",
+      label: "Eligibility",
+      versionToken: "v-eligibility-1",
+    };
+    const api: ReviewApi = {
+      ...criticalFactApi,
+      async getReviewQueue() {
+        const payload = await criticalFactApi.getReviewQueue("study-1");
+        return { ...payload, items: [payload.items[0]!, secondCriticalFact] };
+      },
+      approveFact() {
+        return new Promise((resolve) => {
+          resolveApproval = resolve;
+        });
+      },
+    };
+    const user = userEvent.setup();
+    render(<ReviewQueue studyId="study-1" api={api} />);
+
+    const approvalButtons = await screen.findAllByRole("button", { name: "Approve fact" });
+    await user.click(approvalButtons[0]!);
+    await user.click(screen.getByLabelText("I explicitly confirm this critical fact"));
+    await user.click(screen.getByRole("button", { name: "Confirm approval" }));
+
+    assert.equal(approvalButtons[1]!.hasAttribute("disabled"), true);
+
+    resolveApproval?.({ blockers: [], items: [secondCriticalFact] });
+    assert.ok(await screen.findByRole("button", { name: "Approve fact" }));
+  });
+
   it("keeps archived evidence viewable while disabling review actions", async () => {
     const archivedApi: ReviewApi = {
       ...criticalFactApi,

@@ -99,7 +99,9 @@ function DraftWorkspace({ studyId }: Readonly<{ studyId: string }>) {
             passage={passage}
             api={passageApi}
             readOnly={state.readOnly}
-            onUpdated={() => { void refresh().catch((cause: unknown) => setError(cause instanceof Error ? cause.message : "Unable to refresh passage")); }}
+            onUpdated={() => refresh().catch((cause: unknown) => {
+              setError(cause instanceof Error ? cause.message : "Unable to refresh passage");
+            })}
           />
         ) : (
           <section key={section} aria-labelledby={`${section}-heading`}>

@@ -10,7 +10,7 @@ test("unsupported eligibility remains visible and server-gated from export", asy
   await page.goto("/studies/synthetic-phase-2/draft");
 
   await expect(
-    page.getByRole("region", { name: "Export" }).getByText("Unsupported eligibility criterion"),
+    page.getByRole("region", { name: "eligibility" }).getByText("unsupported eligibility criterion"),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "Create export" })).toBeDisabled();
 });

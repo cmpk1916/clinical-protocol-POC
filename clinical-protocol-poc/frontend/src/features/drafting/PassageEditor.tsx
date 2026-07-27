@@ -15,13 +15,13 @@ export function PassageEditor({
   passage: DraftPassage;
   api: PassageApi;
   readOnly?: boolean;
-  onUpdated?: (passage: DraftPassage) => void;
+  onUpdated?: (passage: DraftPassage) => void | Promise<void>;
 }>) {
   const [text, setText] = useState(passage.text);
   const [findings, setFindings] = useState<PassageFinding[]>(passage.findings);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const blocked = readOnly || passage.stale || findings.length > 0 || passage.status === "blocked" || passage.status === "rejected";
+  const blocked = readOnly || passage.stale || findings.length > 0 || passage.status === "blocked" || passage.status === "rejected" || passage.status === "accepted";
   const supportIds = passage.evidence
     .map((item) => item.replace("Approved fact support: ", ""))
     .filter((item) => item !== "");
@@ -43,7 +43,7 @@ export function PassageEditor({
       });
       setText(updated.text);
       setFindings(updated.findings);
-      onUpdated?.(updated);
+      await onUpdated?.(updated);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Unable to save passage review");
     } finally {
@@ -57,6 +57,7 @@ export function PassageEditor({
       {readOnly ? <p role="status">This archived passage review is read-only. Saved passage evidence remains available.</p> : null}
       {passage.stale ? <p role="alert">Stale passage: revalidate before accepting.</p> : null}
       {error ? <p role="alert">{error}</p> : null}
+      {busy ? <p role="status">Saving passage review…</p> : null}
       <label htmlFor={`${passage.id}-text`}>Passage text</label>
       <textarea
         id={`${passage.id}-text`}

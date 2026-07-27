@@ -1,11 +1,14 @@
 import { expect, test } from "@playwright/test";
 import { createHash } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { inflateRawSync } from "node:zlib";
 
 import {
   createStudy,
   generateAndAcceptPassages,
-  processAndReviewFacts,
+  processSynopsis,
+  reviewAllFacts,
   uploadSupportedInputs,
 } from "./helpers";
 
@@ -28,13 +31,17 @@ function zipEntry(body: Buffer, name: string): string {
 }
 
 test("empty workspace reaches a governed three-artifact export", async ({ page, request }) => {
-  test.setTimeout(90_000);
+  // This journey executes the full server-backed review and export path; allow
+  // each explicit review refresh to settle under the release Docker stack.
+  test.setTimeout(180_000);
   const studyHref = await createStudy(page, "Self-service export journey");
   await page.goto(studyHref);
   await expect(page.getByText("Upload a supported synopsis DOCX to continue.")).toBeVisible();
 
   await uploadSupportedInputs(page);
-  await processAndReviewFacts(page, studyHref);
+  await processSynopsis(page);
+  await page.goto(`${studyHref}/review`);
+  await reviewAllFacts(page);
   await generateAndAcceptPassages(page, studyHref);
 
   await page.getByRole("button", { name: "Create export" }).click();
@@ -43,6 +50,8 @@ test("empty workspace reaches a governed three-artifact export", async ({ page, 
   const links = page.getByRole("link", { name: /^Download / });
   await expect(links).toHaveCount(3);
   await expect(page.getByTestId("artifact-snapshot-ids")).toContainText(snapshot!);
+  const artifactDirectory = resolve(process.cwd(), "test-results/self-service-artifacts");
+  await mkdir(artifactDirectory, { recursive: true });
 
   for (const name of ["protocol.docx", "traceability.csv", "scorecard.html"]) {
     const link = page.getByRole("link", { name: `Download ${name}` });
@@ -53,6 +62,8 @@ test("empty workspace reaches a governed three-artifact export", async ({ page, 
     const body = await response.body();
     const row = await link.locator("xpath=..").textContent();
     expect(createHash("sha256").update(body).digest("hex")).toBe(row?.match(/[a-f0-9]{64}/)?.[0]);
+    expect(row).toContain(snapshot!);
+    await writeFile(resolve(artifactDirectory, name), body);
 
     if (name === "protocol.docx") {
       expect(body.subarray(0, 2).toString()).toBe("PK");
@@ -60,12 +71,21 @@ test("empty workspace reaches a governed three-artifact export", async ({ page, 
     } else if (name === "traceability.csv") {
       const text = body.toString();
       expect(text).not.toContain("[[");
-      expect(text).toContain("section,passage,claim,fact_value,evidence_location");
-      expect(text).toMatch(/""paragraph"":\d+/);
+      const rows = text.trim().split("\n");
+      expect(rows[0]).toBe(
+        "section,passage,claim,fact_value,evidence_location,guidance_release,review_state,validation_status",
+      );
+      expect(rows.slice(1)).not.toHaveLength(0);
+      for (const traceabilityRow of rows.slice(1)) {
+        expect(traceabilityRow).toMatch(/""part"":""word\/document.xml""/);
+        expect(traceabilityRow).toMatch(/""index"":\d+/);
+      }
     } else {
       const text = body.toString();
       expect(text).not.toContain("[[");
-      expect(text).toContain("Synthetic POC output only");
+      expect(text).toContain(
+        "Synthetic POC output only; not validated and no clinical, regulatory, submission, operational, or readiness claim is made.",
+      );
       expect(text).not.toContain("readiness percentage");
     }
   }

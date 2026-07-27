@@ -17,6 +17,31 @@ def test_migration_revision_identifiers_fit_alembic_version_column() -> None:
     assert all(len(revision) <= 32 for revision in revision_ids)
 
 
+def test_study_model_migration_keeps_processing_history_for_0009(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    database = tmp_path / "study-model-history.db"
+    url = f"sqlite+pysqlite:///{database}"
+    monkeypatch.setenv("DATABASE_URL", url)  # type: ignore[attr-defined]
+    config = Config("alembic.ini")
+
+    command.upgrade(config, "0003_study_model")
+
+    inspector = inspect(create_engine(url))
+    assert "processing_attempts" not in inspector.get_table_names()
+    assert "processing_attempt_id" not in {
+        item["name"] for item in inspector.get_columns("facts")
+    }
+    assert "confidence" not in {
+        item["name"] for item in inspector.get_columns("fact_versions")
+    }
+    assert "fk_fact_processing_attempt_tenant" not in {
+        item["name"] for item in inspector.get_foreign_keys("facts")
+    }
+
+    command.downgrade(config, "base")
+
+
 def test_files_migration_upgrade_constraints_and_downgrade(tmp_path: Path, monkeypatch: object) -> None:
     database = tmp_path / "migration.db"
     url = f"sqlite+pysqlite:///{database}"

@@ -10,7 +10,9 @@ test("changing an approved dose marks its passage stale and denies export", asyn
   await page.goto("/studies/synthetic-phase-2/draft");
 
   await expect(page.getByText("Stale passage: revalidate before accepting.")).toBeVisible();
-  await expect(page.getByText("Approved dose changed after passage acceptance")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Accept passage" })).toBeDisabled();
+  await expect(page.getByRole("region", { name: "Export" }).getByText("STALE_PASSAGE")).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "study design" }).getByRole("button", { name: "Accept passage" }),
+  ).toBeDisabled();
   await expect(page.getByRole("button", { name: "Create export" })).toBeDisabled();
 });

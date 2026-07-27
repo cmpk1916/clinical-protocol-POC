@@ -435,7 +435,7 @@ export const protocolDraftingApi: DraftingApi = {
     const response = await fetch(`/api/local/studies/${encodeURIComponent(studyId)}/quality`);
     if (!response.ok) throw new Error(await errorMessage(response, "Unable to load quality state"));
     const payload = await response.json() as {
-      dimensions: Record<string, { status: "pass" | "needs_review" | "blocked" | "not_applicable"; passed_count: number; blocker_codes: string[] }>;
+      dimensions: Record<string, { status: "pass" | "needs_review" | "blocked" | "not_applicable"; passed_count: number; finding_codes: string[] }>;
       blockers: Array<{ message: string }>;
     };
     return {
@@ -444,7 +444,7 @@ export const protocolDraftingApi: DraftingApi = {
         name,
         status: value.status === "pass" ? "pass" : value.status === "blocked" ? "blocked" : "warning",
         count: value.passed_count,
-        findings: value.blocker_codes,
+        findings: value.finding_codes,
       })),
     };
   },

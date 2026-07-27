@@ -29,3 +29,18 @@ def test_makefile_has_one_command_synthetic_demo_setup() -> None:
     assert "/test/reset" in makefile
     assert "/test/studies/synthetic-phase-2/seed" in makefile
     assert '"scenario":"happy_path"' in makefile
+
+
+def test_e2e_stack_uses_the_seeded_journeys_tenant() -> None:
+    makefile = (Path(__file__).parents[3] / "Makefile").read_text()
+    e2e_recipe = makefile.partition("\ne2e:")[2].partition("\napp:")[0]
+
+    assert "LOCAL_TENANT_ID=synthetic-demo" in e2e_recipe
+
+
+def test_e2e_target_can_run_a_selected_playwright_spec() -> None:
+    makefile = (Path(__file__).parents[3] / "Makefile").read_text()
+    e2e_recipe = makefile.partition("\ne2e:")[2].partition("\napp:")[0]
+
+    assert "E2E_TESTS ?=" in makefile
+    assert "pnpm exec playwright test $(E2E_TESTS)" in e2e_recipe

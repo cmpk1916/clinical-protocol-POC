@@ -3,8 +3,9 @@ import { expect, test } from "@playwright/test";
 import {
   createStudy,
   generateAndAcceptPassages,
-  processAndReviewFacts,
+  processSynopsis,
   replacementFixture,
+  reviewAllFacts,
   uploadSupportedInputs,
 } from "./helpers";
 
@@ -13,7 +14,9 @@ test("synopsis replacement supersedes the current input and requires re-review",
   const studyHref = await createStudy(page, "Synopsis replacement journey");
   await page.goto(studyHref);
   await uploadSupportedInputs(page);
-  await processAndReviewFacts(page, studyHref);
+  await processSynopsis(page);
+  await page.goto(`${studyHref}/review`);
+  await reviewAllFacts(page);
   await generateAndAcceptPassages(page, studyHref);
   await page.goto(studyHref);
 
@@ -29,8 +32,8 @@ test("synopsis replacement supersedes the current input and requires re-review",
   await expect(page.getByRole("link", { name: /Review \d+ candidate facts/ })).toBeVisible();
 
   await page.goto(`${studyHref}/review`);
-  await expect(page.getByRole("button", { name: "Approve fact" })).toBeVisible();
-  await processAndReviewFacts(page, studyHref);
+  await expect(page.locator("button:enabled").filter({ hasText: "Approve fact" }).first()).toBeVisible();
+  await reviewAllFacts(page);
 });
 
 test("template replacement keeps accepted passages and enables a revalidated export", async ({ page }) => {
@@ -38,7 +41,9 @@ test("template replacement keeps accepted passages and enables a revalidated exp
   const studyHref = await createStudy(page, "Template replacement journey");
   await page.goto(studyHref);
   await uploadSupportedInputs(page);
-  await processAndReviewFacts(page, studyHref);
+  await processSynopsis(page);
+  await page.goto(`${studyHref}/review`);
+  await reviewAllFacts(page);
   await generateAndAcceptPassages(page, studyHref);
   await page.goto(studyHref);
 
@@ -68,7 +73,9 @@ test("an invalid DOCX upload leaves the current synopsis visible and unchanged",
     buffer: Buffer.from("not a ZIP package"),
   });
   await page.getByRole("button", { name: "Upload synopsis" }).click();
-  await expect(page.getByRole("alert")).toContainText(/Unable to upload synopsis|invalid/i);
+  await expect(page.getByRole("article", { name: "Synopsis" }).getByRole("alert")).toContainText(
+    /UNSAFE_DOCUMENT|Unable to upload synopsis|invalid/i,
+  );
   await expect(page.getByRole("article", { name: "Synopsis" })).toContainText("synopsis.docx");
   await expect(page.getByRole("article", { name: "Synopsis" })).toContainText("Version 1");
   await expect(page.getByRole("button", { name: "Process synopsis" })).toBeVisible();

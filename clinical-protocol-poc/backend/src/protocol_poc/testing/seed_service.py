@@ -3,10 +3,10 @@ from hashlib import sha256
 from sqlalchemy.orm import Session
 
 from protocol_poc.drafting.models import Claim, Passage, PassageVersion, SupportLink
-from protocol_poc.files.models import FileRecord, FileVersion, SourceEvidence
+from protocol_poc.files.models import FileRecord, FileVersion, SourceEvidence, StudyInput
 from protocol_poc.files.service import FileStorage
 from protocol_poc.rendering.template_map import build_template
-from protocol_poc.studies.models import Fact, FactVersion, Study
+from protocol_poc.studies.models import Fact, FactVersion, ProcessingAttempt, Study
 
 
 SECTIONS = ("synopsis", "objectives_endpoints", "study_design", "eligibility")
@@ -60,9 +60,29 @@ def seed_synthetic_study(
     ))
     session.flush()
 
+    session.add(StudyInput(
+        id="synopsis-input",
+        tenant_id=tenant_id,
+        study_id=study_id,
+        role="synopsis",
+        current_file_version_id="synopsis-v1",
+        conformance_status="conforming",
+    ))
+    session.add(ProcessingAttempt(
+        id="processing-attempt",
+        tenant_id=tenant_id,
+        study_id=study_id,
+        synopsis_version_id="synopsis-v1",
+        extractor_name="seed",
+        extractor_version="seed-v1",
+        status="succeeded",
+    ))
+    session.flush()
+
     session.add(Fact(
         id="fact-dose", tenant_id=tenant_id, study_id=study_id, kind="dose",
-        status="approved", critical=True,
+        processing_attempt_id="processing-attempt",
+        status="candidate" if scenario == "happy_path" else "approved", critical=True,
     ))
     session.flush()
     session.add(FactVersion(
@@ -78,12 +98,21 @@ def seed_synthetic_study(
         version_id = f"passage-version-{section}"
         is_stale = scenario == "fact_change_invalidation" and section == "study_design"
         is_unsupported = scenario == "unsupported_eligibility" and section == "eligibility"
+        status = (
+            "ready_for_review"
+            if scenario == "happy_path" and section == "synopsis"
+            else "stale"
+            if is_stale
+            else "blocked"
+            if is_unsupported
+            else "accepted"
+        )
         session.add(Passage(
             id=passage_id,
             tenant_id=tenant_id,
             study_id=study_id,
             section=section,
-            status="stale" if is_stale else ("blocked" if is_unsupported else "accepted"),
+            status=status,
             invalidation_reason="supporting_fact_changed" if is_stale else None,
         ))
         session.flush()
@@ -135,6 +164,15 @@ def seed_synthetic_study(
         content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         storage_key=template_key,
         status="succeeded",
+    ))
+    session.flush()
+    session.add(StudyInput(
+        id="template-input",
+        tenant_id=tenant_id,
+        study_id=study_id,
+        role="template",
+        current_file_version_id="template-v1",
+        conformance_status="conforming",
     ))
     session.flush()
     return {

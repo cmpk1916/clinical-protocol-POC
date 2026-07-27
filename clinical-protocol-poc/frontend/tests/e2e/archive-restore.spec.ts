@@ -22,6 +22,7 @@ test("archiving makes the workspace read-only and restore returns it to active w
   await page.goto("/");
   await page.getByRole("tab", { name: "Archived" }).click();
   await page.getByRole("button", { name: `Restore ${name}` }).click();
+  await expect(page.getByRole("heading", { name })).toHaveCount(0);
   await expect(page.getByRole("tab", { name: "Active" })).toBeVisible();
   await page.getByRole("tab", { name: "Active" }).click();
   await expect(page.getByRole("link", { name: `Open ${name}` })).toBeVisible();
