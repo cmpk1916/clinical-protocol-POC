@@ -4,7 +4,6 @@ import type {
   ExportState,
   QualityScorecard,
   ReviewQueuePayload,
-  StudyModel,
   WorkspaceInput,
   WorkspaceSummary,
 } from "./types";
@@ -331,43 +330,6 @@ export const protocolReviewApi: ReviewApi = {
   },
   reviewFact(input) {
     return postReview(input, { action: input.action, rationale: input.rationale });
-  },
-};
-
-export type ModelApi = {
-  getStudyModel(studyId: string): Promise<StudyModel>;
-};
-
-const studyModel: StudyModel = {
-  facts: [
-    {
-      id: "fact-dose",
-      label: "Dose",
-      value: "10 mg once daily",
-      status: "approved",
-      version: "v3",
-      provenance: ["Synopsis p. 4"],
-      conflicts: [],
-      affectedPassages: ["Treatment administration"],
-      relationships: [{ label: "belongs to arm", target: "Arm A" }],
-    },
-    {
-      id: "fact-endpoint",
-      label: "Primary endpoint",
-      value: "Change from baseline at Week 24",
-      status: "conflict",
-      version: "v2",
-      provenance: ["Synopsis p. 6", "CSR extract p. 2"],
-      conflicts: ["Endpoint wording differs across sources"],
-      affectedPassages: ["Objectives", "Endpoints"],
-      relationships: [{ label: "measured at", target: "Week 24" }],
-    },
-  ],
-};
-
-export const demoModelApi: ModelApi = {
-  async getStudyModel() {
-    return studyModel;
   },
 };
 
