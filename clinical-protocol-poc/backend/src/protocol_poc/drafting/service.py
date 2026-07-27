@@ -5,6 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from protocol_poc.drafting.context import DraftContextBuilder
+from protocol_poc.drafting.locking import lock_active_passage
 from protocol_poc.drafting.local_composer import ComposedPassage, LocalComposer
 from protocol_poc.drafting.models import Claim, Passage, PassageVersion, SupportLink
 from protocol_poc.studies.service import StudyService
@@ -53,20 +54,19 @@ class DraftingService:
         return DraftResult(passage.id, output.text, passage.status, passage.current_version)
 
     def regenerate(self, ctx: TenantContext, passage_id: str, *, expected_version: int) -> DraftResult:
-        passage = self.session.scalar(
-            select(Passage).where(Passage.id == passage_id, Passage.tenant_id == ctx.tenant_id)
+        passage = lock_active_passage(
+            self.session, ctx, passage_id, expected_version
         )
-        if passage is None:
-            raise ValueError("passage not found")
-        StudyService(self.session).require_active(ctx, passage.study_id)
-        if passage.current_version != expected_version:
-            from protocol_poc.drafting.review_service import PassageVersionConflict
-            raise PassageVersionConflict("passage version changed")
-        current = self.session.scalar(select(PassageVersion).where(
-            PassageVersion.passage_id == passage.id,
-            PassageVersion.tenant_id == ctx.tenant_id,
-            PassageVersion.is_current.is_(True),
-        ))
+        current = self.session.scalar(
+            select(PassageVersion)
+            .where(
+                PassageVersion.passage_id == passage.id,
+                PassageVersion.tenant_id == ctx.tenant_id,
+                PassageVersion.is_current.is_(True),
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
         if current is None:
             raise ValueError("current passage version missing")
         current.is_current = False

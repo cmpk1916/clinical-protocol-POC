@@ -3,10 +3,11 @@ import threading
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session
 
 from protocol_poc.db import Base
+from protocol_poc.drafting.service import DraftingService
 from protocol_poc.drafting.models import Passage, PassageVersion, SupportLink
 from protocol_poc.drafting.review_service import PassageReviewService
 from protocol_poc.files.models import (
@@ -96,9 +97,29 @@ def _seed_reviewable_passage(engine) -> None:
         session.flush()
         session.add(FactVersion(
             id="fact-version-a", tenant_id="tenant-a", fact_id="fact-a",
-            version=1, value_json={"kind": "dose", "value": "10", "unit": "mg"},
+            version=1,
+            value_json={
+                "kind": "dose",
+                "value": "10",
+                "unit": "mg",
+                "frequency": "once daily",
+            },
             is_current=True,
         ))
+        for fact_id, kind, value in (
+            ("fact-arm", "arm", "Experimental arm"),
+            ("fact-intervention", "intervention", "Synthetic drug"),
+        ):
+            session.add(Fact(
+                id=fact_id, tenant_id="tenant-a", study_id="study-a",
+                processing_attempt_id="attempt-v1", kind=kind, status="approved",
+            ))
+            session.flush()
+            session.add(FactVersion(
+                id=f"{fact_id}-version", tenant_id="tenant-a", fact_id=fact_id,
+                version=1, value_json={"kind": kind, "value": value},
+                is_current=True,
+            ))
         session.add(Passage(
             id="passage-a", tenant_id="tenant-a", study_id="study-a",
             section="study_design", status="ready_for_review", current_version=1,
@@ -115,6 +136,39 @@ def _seed_reviewable_passage(engine) -> None:
             support_type="fact", support_id="fact-a",
         ))
         session.commit()
+
+
+def _confirm_real_replacement(
+    session: Session, ctx: TenantContext, tmp_path: Path
+) -> None:
+    evidence = session.get(SourceEvidence, "proposed-evidence")
+    assert evidence is not None
+    workflow = DocumentWorkflowService(
+        session,
+        IngestService(session, LocalFileStorage(tmp_path)),
+    )
+    proposal = ExtractionProposal(
+        (
+            LocalCandidate(
+                "dose",
+                {"kind": "dose", "value": "20", "unit": "mg"},
+                evidence.id,
+            ),
+        ),
+        (),
+    )
+    workflow._extract_replacement = lambda *_: (  # type: ignore[method-assign]
+        proposal,
+        {evidence.id: evidence},
+    )
+    workflow.confirm_replacement(
+        ctx,
+        "study-a",
+        "synopsis",
+        "synopsis-v2",
+        "synopsis-v1",
+        1,
+    )
 
 
 @pytest.mark.parametrize("concurrent_mutation", ["replacement", "archive"])
@@ -154,34 +208,7 @@ def test_accept_serializes_with_replacement_and_archive(
                 if concurrent_mutation == "archive":
                     StudyService(session).archive(ctx, "study-a", expected_version=1)
                 else:
-                    evidence = session.get(SourceEvidence, "proposed-evidence")
-                    assert evidence is not None
-                    workflow = DocumentWorkflowService(
-                        session,
-                        IngestService(session, LocalFileStorage(tmp_path)),
-                    )
-                    proposal = ExtractionProposal(
-                        (
-                            LocalCandidate(
-                                "dose",
-                                {"kind": "dose", "value": "20", "unit": "mg"},
-                                evidence.id,
-                            ),
-                        ),
-                        (),
-                    )
-                    workflow._extract_replacement = lambda *_: (  # type: ignore[method-assign]
-                        proposal,
-                        {evidence.id: evidence},
-                    )
-                    workflow.confirm_replacement(
-                        ctx,
-                        "study-a",
-                        "synopsis",
-                        "synopsis-v2",
-                        "synopsis-v1",
-                        1,
-                    )
+                    _confirm_real_replacement(session, ctx, tmp_path)
                 session.commit()
                 mutation_complete.set()
         except BaseException as error:
@@ -203,6 +230,84 @@ def test_accept_serializes_with_replacement_and_archive(
     assert accept_complete.is_set()
     assert mutation_complete.is_set()
     assert completed_before_accept_release is False
+    with Session(postgres_engine) as session:
+        study = session.get(Study, "study-a")
+        passage = session.get(Passage, "passage-a")
+        assert study is not None and passage is not None
+        if concurrent_mutation == "replacement":
+            assert passage.status == "stale"
+        else:
+            assert study.lifecycle == "archived"
+
+
+@pytest.mark.parametrize("concurrent_mutation", ["replacement", "archive"])
+def test_regenerate_serializes_with_replacement_and_archive(
+    postgres_engine, concurrent_mutation: str, tmp_path: Path
+) -> None:
+    _seed_reviewable_passage(postgres_engine)
+    ctx = TenantContext("tenant-a", "writer-a")
+    current_version_read = threading.Event()
+    release_regenerate = threading.Event()
+    mutation_started = threading.Event()
+    mutation_complete = threading.Event()
+    regenerate_complete = threading.Event()
+    errors: list[BaseException] = []
+
+    def regenerate() -> None:
+        try:
+            with Session(postgres_engine) as session:
+                @event.listens_for(session, "do_orm_execute", retval=True)
+                def pause_after_current_version_read(state):
+                    result = state.invoke_statement()
+                    if (
+                        state.is_select
+                        and any(
+                            description.get("entity") is PassageVersion
+                            for description in state.statement.column_descriptions
+                        )
+                    ):
+                        current_version_read.set()
+                        assert release_regenerate.wait(timeout=5)
+                    return result
+
+                DraftingService(session).regenerate(
+                    ctx, "passage-a", expected_version=1
+                )
+                session.commit()
+                regenerate_complete.set()
+        except BaseException as error:
+            errors.append(error)
+            release_regenerate.set()
+
+    def mutate() -> None:
+        try:
+            with Session(postgres_engine) as session:
+                mutation_started.set()
+                if concurrent_mutation == "archive":
+                    StudyService(session).archive(ctx, "study-a", expected_version=1)
+                else:
+                    _confirm_real_replacement(session, ctx, tmp_path)
+                session.commit()
+                mutation_complete.set()
+        except BaseException as error:
+            errors.append(error)
+            release_regenerate.set()
+
+    regenerate_thread = threading.Thread(target=regenerate)
+    mutation_thread = threading.Thread(target=mutate)
+    regenerate_thread.start()
+    assert current_version_read.wait(timeout=5)
+    mutation_thread.start()
+    assert mutation_started.wait(timeout=5)
+    completed_before_regenerate_release = mutation_complete.wait(timeout=0.3)
+    release_regenerate.set()
+    regenerate_thread.join(timeout=5)
+    mutation_thread.join(timeout=5)
+
+    assert errors == []
+    assert regenerate_complete.is_set()
+    assert mutation_complete.is_set()
+    assert completed_before_regenerate_release is False
     with Session(postgres_engine) as session:
         study = session.get(Study, "study-a")
         passage = session.get(Passage, "passage-a")

@@ -5,26 +5,22 @@ from sqlalchemy.orm import Session
 
 from protocol_poc.audit.service import AuditService
 from protocol_poc.drafting.context import DraftContextBuilder
+from protocol_poc.drafting.locking import (
+    PassageReviewError as PassageReviewError,
+    PassageVersionConflict as PassageVersionConflict,
+    lock_active_passage,
+)
 from protocol_poc.drafting.local_composer import LocalComposer
 from protocol_poc.drafting.models import Claim, Passage, PassageVersion, SupportLink
 from protocol_poc.files.models import StudyInput
-from protocol_poc.studies.models import Fact, FactVersion, ProcessingAttempt, Study
-from protocol_poc.studies.service import StudyArchived, StudyNotFound
+from protocol_poc.studies.models import Fact, FactVersion, ProcessingAttempt
 from protocol_poc.tenancy import TenantContext
 from protocol_poc.validation.clinical_values import ApprovedClinicalModel
 from protocol_poc.validation.findings import Finding
 from protocol_poc.validation.service import PassageValidator
 
 
-class PassageReviewError(RuntimeError):
-    pass
-
-
 class PassageBlocked(PassageReviewError):
-    pass
-
-
-class PassageVersionConflict(PassageReviewError):
     pass
 
 
@@ -35,40 +31,9 @@ class PassageReviewService:
         self.validator = validator
 
     def _passage(self, ctx: TenantContext, passage_id: str, expected_version: int) -> Passage:
-        study_id = self.session.scalar(
-            select(Passage.study_id).where(
-                Passage.id == passage_id,
-                Passage.tenant_id == ctx.tenant_id,
-            )
+        return lock_active_passage(
+            self.session, ctx, passage_id, expected_version
         )
-        if study_id is None:
-            raise PassageReviewError("passage not found")
-
-        study = self.session.scalar(
-            select(Study)
-            .where(Study.id == study_id, Study.tenant_id == ctx.tenant_id)
-            .with_for_update()
-            .execution_options(populate_existing=True)
-        )
-        if study is None:
-            raise StudyNotFound("study not found")
-        if study.lifecycle == "archived":
-            raise StudyArchived("study is archived")
-
-        passage = self.session.scalar(
-            select(Passage)
-            .where(
-                Passage.id == passage_id,
-                Passage.tenant_id == ctx.tenant_id,
-            )
-            .with_for_update()
-            .execution_options(populate_existing=True)
-        )
-        if passage is None:
-            raise PassageReviewError("passage not found")
-        if passage.current_version != expected_version:
-            raise PassageVersionConflict("passage version changed")
-        return passage
 
     def accept(self, ctx: TenantContext, passage_id: str, *, expected_version: int) -> Passage:
         passage = self._passage(ctx, passage_id, expected_version)
@@ -164,13 +129,6 @@ class PassageReviewService:
         passage = self._passage(ctx, passage_id, expected_version)
         passage.status = "rejected"
         self.audit.append(ctx, "passage.rejected", "passage", passage.id, {"version": passage.current_version, "rationale": rationale})
-        return passage
-
-    def regenerate(self, ctx: TenantContext, passage_id: str, *, expected_version: int) -> Passage:
-        passage = self._passage(ctx, passage_id, expected_version)
-        passage.status = "draft"
-        passage.invalidation_reason = None
-        self.audit.append(ctx, "passage.regeneration_requested", "passage", passage.id, {"version": passage.current_version})
         return passage
 
     def _validate(self, passage: Passage, text: str) -> list[Finding]:
