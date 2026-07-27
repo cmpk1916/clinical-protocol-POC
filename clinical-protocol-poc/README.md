@@ -8,19 +8,26 @@ No protocol produced by this POC is claimed clinically, regulatorily, submission
 
 This is **not a validated system**. It performs **no live drafting research** and must not be represented as supporting a clinical, regulatory, or submission-readiness claim.
 
-## Test it yourself
+## Run a self-service synthetic study
 
-For the application demo, the only prerequisites are Docker with Compose, `make`, and `curl`.
+For a clean local workflow, the only prerequisites are Docker with Compose and `make`.
 
 1. Copy `.env.example` to `.env`. The included values are local-only defaults and are not secrets suitable for another environment.
-2. Run `make demo`. This builds the application, applies database migrations, waits for every service to become healthy, resets disposable local state, and seeds the synthetic happy-path study.
-3. Open `http://localhost:3000/studies/synthetic-phase-2/review`.
-4. Approve the synthetic critical dose fact and confirm it explicitly.
-5. Open `/studies/synthetic-phase-2/draft`, review and accept the passage, then select **Create export**.
-6. Download `protocol.docx`, `traceability.csv`, and `scorecard.html`. Confirm that all three rows show the same snapshot ID and that each row has its own SHA-256 digest.
-7. Run `make down` when finished. Add `--volumes` to the Compose command if you also want to remove disposable database and object-storage data.
+2. Run `make app`. This builds the application, applies migrations, and waits for a clean local stack; it does not seed a study.
+3. Open `http://localhost:3000`, create a synthetic study, and open its workspace.
+4. Upload `fixtures/self-service/synopsis.docx` and `fixtures/self-service/template.docx`, then select **Process synopsis**.
+5. Review the synthetic candidate facts, generate and accept the four draft passages, then select **Create export**.
+6. Download `protocol.docx`, `traceability.csv`, and `scorecard.html`. Confirm their shared snapshot ID and individual SHA-256 digests.
+7. Archive a study from the home screen to make it read-only; use the **Archived** tab and **Restore** to return it to active work.
+8. Run `make down` when finished. Add `--volumes` to the Compose command if you also want to remove disposable database and object-storage data.
 
-This workflow tests a synthetic proof of concept. It is not system validation and does not establish clinical, regulatory, operational, production, or submission readiness.
+The local stack and its documents are for synthetic evaluation data only. Do not upload patient, sponsor, confidential, clinical, regulatory, or production data; the POC has no external document-sharing workflow and makes no readiness claim.
+
+## Seeded deterministic demo
+
+Run `make demo` when you need the existing pre-seeded synthetic happy-path demonstration. It resets disposable local state and opens `http://localhost:3000/studies/synthetic-phase-2/review`; it is separate from the clean self-service workflow above.
+
+Both workflows test a synthetic proof of concept. They are not system validation and do not establish clinical, regulatory, operational, production, or submission readiness.
 
 ## Development checks
 

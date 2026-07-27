@@ -1,4 +1,4 @@
-.PHONY: bootstrap test lint typecheck evaluation e2e demo up down
+.PHONY: bootstrap test lint typecheck evaluation e2e app demo up down
 
 E2E_PROJECT ?= protocol-poc-release-e2e
 E2E_WEB_PORT ?= 3200
@@ -30,6 +30,10 @@ e2e:
 	APP_ENV=test WEB_PORT=$(E2E_WEB_PORT) API_PORT=$(E2E_API_PORT) docker compose -p $(E2E_PROJECT) up --build -d --wait; \
 	cd frontend; \
 	E2E_WEB_URL=http://127.0.0.1:$(E2E_WEB_PORT) E2E_API_URL=http://127.0.0.1:$(E2E_API_PORT) pnpm exec playwright test
+
+app:
+	APP_ENV=test docker compose up --build -d --wait
+	@echo "Clinical Protocol POC ready: http://127.0.0.1:$${WEB_PORT:-3000}"
 
 demo:
 	APP_ENV=test docker compose up --build -d --wait

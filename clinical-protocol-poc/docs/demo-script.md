@@ -3,9 +3,19 @@
 ## Before the demo
 
 1. Confirm the repository contains synthetic data only.
-2. Copy `.env.example` to `.env`, then run `make demo`.
-3. Open `http://localhost:3000/studies/synthetic-phase-2/review`.
-4. State clearly: this is a proof of concept, not a validated clinical or regulatory system.
+2. Copy `.env.example` to `.env`, then run `make app` for a clean local stack.
+3. Open `http://localhost:3000`, create a synthetic study, and upload `fixtures/self-service/synopsis.docx` and `fixtures/self-service/template.docx`.
+4. Process the synopsis, review the candidate facts, generate and accept the four passages, then create the export.
+5. State clearly: this is a proof of concept, not a validated clinical or regulatory system.
+
+## Self-service archive and restore
+
+1. From the home screen, archive the synthetic study and show that its workspace is read-only while saved inputs and evidence remain visible.
+2. Select **Archived**, restore the study, return to its workspace, and show that the next safe action is enabled again.
+
+## Seeded deterministic demo
+
+For the retained seeded presentation, run `make demo` and open `http://localhost:3000/studies/synthetic-phase-2/review`. The path below assumes that seeded study.
 
 ## Successful governed path
 
