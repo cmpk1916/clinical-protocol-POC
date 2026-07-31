@@ -1,12 +1,27 @@
 import { expect, test } from "@playwright/test";
 
-import { createStudy, uploadSupportedInputs } from "./helpers";
+import {
+  createStudy,
+  generateAndAcceptPassages,
+  processSynopsis,
+  reviewAllFacts,
+  uploadSupportedInputs,
+} from "./helpers";
 
 test("archiving makes the workspace read-only and restore returns it to active work", async ({ page }) => {
+  test.setTimeout(180_000);
   const name = "Archive and restore journey";
   const studyHref = await createStudy(page, name);
   await page.goto(studyHref);
   await uploadSupportedInputs(page);
+  await processSynopsis(page);
+  await page.goto(`${studyHref}/review`);
+  await reviewAllFacts(page);
+  await generateAndAcceptPassages(page, studyHref);
+  await page.getByRole("button", { name: "Create export" }).click();
+  const snapshot = await page.getByTestId("snapshot-id").textContent();
+  expect(snapshot).toBeTruthy();
+  await expect(page.getByRole("link", { name: /^Download / })).toHaveCount(3);
 
   await page.goto("/");
   await page.getByRole("button", { name: `Archive ${name}` }).click();
@@ -27,6 +42,11 @@ test("archiving makes the workspace read-only and restore returns it to active w
   await page.getByRole("tab", { name: "Active" }).click();
   await expect(page.getByRole("link", { name: `Open ${name}` })).toBeVisible();
 
-  await page.goto(studyHref);
-  await expect(page.getByRole("button", { name: "Process synopsis" })).toBeEnabled();
+  await page.goto(`${studyHref}/draft`);
+  await expect(page.getByTestId("snapshot-id")).toHaveText(snapshot!);
+  await expect(page.getByRole("link", { name: /^Download / })).toHaveCount(3);
+  await expect(page.getByRole("link", { name: "Download protocol.docx" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Download traceability.csv" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Download scorecard.html" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Create export" })).toHaveCount(0);
 });
