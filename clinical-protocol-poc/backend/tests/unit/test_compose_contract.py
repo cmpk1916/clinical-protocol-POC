@@ -1,9 +1,24 @@
 from pathlib import Path
 
 
-def test_compose_database_url_uses_installed_psycopg_driver() -> None:
-    compose = (Path(__file__).parents[3] / "compose.yaml").read_text()
-    assert "postgresql+psycopg://protocol_poc:protocol_poc@postgres:5432/protocol_poc" in compose
+def test_local_database_urls_use_installed_psycopg_driver() -> None:
+    root = Path(__file__).parents[3]
+    expected_url = (
+        "postgresql+psycopg://"
+        "protocol_poc:protocol_poc@postgres:5432/protocol_poc"
+    )
+    configured_sources = {
+        ".env.example": (root / ".env.example").read_text(),
+        "compose.yaml": (root / "compose.yaml").read_text(),
+        "backend/alembic.ini": (root / "backend" / "alembic.ini").read_text(),
+        "backend/src/protocol_poc/config.py": (
+            root / "backend" / "src" / "protocol_poc" / "config.py"
+        ).read_text(),
+    }
+
+    for source_name, source_text in configured_sources.items():
+        assert expected_url in source_text, source_name
+        assert "postgresql://" not in source_text, source_name
 
 
 def test_frontend_runner_keeps_pnpm_build_policy() -> None:
