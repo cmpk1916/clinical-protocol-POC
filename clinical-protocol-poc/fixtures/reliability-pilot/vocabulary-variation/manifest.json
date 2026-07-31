@@ -1,0 +1,128 @@
+{
+  "schema_version": 1,
+  "study_key": "vocabulary-variation",
+  "study_name": "Reliability 2 - Vocabulary variation",
+  "initial_outcome": "direct_success",
+  "inputs": {
+    "synopsis": "synopsis.docx",
+    "template": "template.docx"
+  },
+  "input_sha256": {
+    "synopsis": "a845fa4737bf8286a9f9e33c82e23d854a7047212ef87cd0786a0e8c23d3d410",
+    "template": "3be81ca82b96da8c0b229799458160632aa765eabfb36be58691c2214ab28705"
+  },
+  "expected_facts": [
+    {
+      "kind": "study_identity",
+      "value": {
+        "kind": "string",
+        "value": "REL-VOC-02"
+      },
+      "critical": false
+    },
+    {
+      "kind": "objective",
+      "value": {
+        "kind": "string",
+        "value": "Evaluate synthetic response durability"
+      },
+      "critical": false
+    },
+    {
+      "kind": "endpoint",
+      "value": {
+        "kind": "string",
+        "value": "Sustained response"
+      },
+      "critical": false
+    },
+    {
+      "kind": "timepoint",
+      "value": {
+        "kind": "string",
+        "value": "Week 18"
+      },
+      "critical": false
+    },
+    {
+      "kind": "arm",
+      "value": {
+        "kind": "string",
+        "value": "Active arm"
+      },
+      "critical": false
+    },
+    {
+      "kind": "intervention",
+      "value": {
+        "kind": "string",
+        "value": "Synthetic Compound Beta"
+      },
+      "critical": false
+    },
+    {
+      "kind": "dose",
+      "value": {
+        "kind": "dose",
+        "value": "25",
+        "unit": "mg",
+        "frequency": "once daily"
+      },
+      "critical": true
+    },
+    {
+      "kind": "population",
+      "value": {
+        "kind": "string",
+        "value": "Adults with synthetic condition Beta"
+      },
+      "critical": false
+    },
+    {
+      "kind": "eligibility",
+      "value": {
+        "kind": "structured_criterion",
+        "value": {
+          "text": "Adults aged 21 through 70 years with synthetic condition Beta"
+        }
+      },
+      "critical": true
+    },
+    {
+      "kind": "duration",
+      "value": {
+        "kind": "string",
+        "value": "18 weeks"
+      },
+      "critical": false
+    }
+  ],
+  "expected_blockers": [],
+  "expected_next_action": "review_facts",
+  "correction": null,
+  "expected_current_versions": {
+    "synopsis": 1,
+    "template": 1
+  },
+  "expected_passages": {
+    "synopsis": "REL-VOC-02 is a synthetic study in Adults with synthetic condition Beta.",
+    "objectives_endpoints": "The objective is to Evaluate synthetic response durability; the endpoint is Sustained response at Week 18.",
+    "study_design": "Active arm receives Synthetic Compound Beta, 25 mg once daily, for 18 weeks.",
+    "eligibility": "Eligibility is limited to Adults aged 21 through 70 years with synthetic condition Beta."
+  },
+  "unsupported_edit": null,
+  "expected_artifacts": [
+    {
+      "name": "protocol.docx",
+      "media_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    },
+    {
+      "name": "traceability.csv",
+      "media_type": "text/csv"
+    },
+    {
+      "name": "scorecard.html",
+      "media_type": "text/html"
+    }
+  ]
+}

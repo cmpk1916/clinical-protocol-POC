@@ -1,0 +1,140 @@
+{
+  "schema_version": 1,
+  "study_key": "broken-template",
+  "study_name": "Reliability 5 - Broken template recovery",
+  "initial_outcome": "blocked_then_recover",
+  "inputs": {
+    "synopsis": "synopsis.docx",
+    "template": "template.docx",
+    "corrected_template": "corrected-template.docx"
+  },
+  "input_sha256": {
+    "synopsis": "6d4f70456d6c37c389ec8c7fba279083df1d6efef8805f7bc214f3aa0cb0961b",
+    "template": "3666fba2d50e43669efbcf03c0cb128a1c4a7e5c9b0de8ef6dcfd47ac84775c3",
+    "corrected_template": "3be81ca82b96da8c0b229799458160632aa765eabfb36be58691c2214ab28705"
+  },
+  "expected_facts": [
+    {
+      "kind": "study_identity",
+      "value": {
+        "kind": "string",
+        "value": "REL-TPL-05"
+      },
+      "critical": false
+    },
+    {
+      "kind": "objective",
+      "value": {
+        "kind": "string",
+        "value": "Evaluate synthetic template recovery"
+      },
+      "critical": false
+    },
+    {
+      "kind": "endpoint",
+      "value": {
+        "kind": "string",
+        "value": "Template recovery response"
+      },
+      "critical": false
+    },
+    {
+      "kind": "timepoint",
+      "value": {
+        "kind": "string",
+        "value": "Week 8"
+      },
+      "critical": false
+    },
+    {
+      "kind": "arm",
+      "value": {
+        "kind": "string",
+        "value": "Template arm"
+      },
+      "critical": false
+    },
+    {
+      "kind": "intervention",
+      "value": {
+        "kind": "string",
+        "value": "Synthetic Compound Epsilon"
+      },
+      "critical": false
+    },
+    {
+      "kind": "dose",
+      "value": {
+        "kind": "dose",
+        "value": "8",
+        "unit": "mg",
+        "frequency": "once daily"
+      },
+      "critical": true
+    },
+    {
+      "kind": "population",
+      "value": {
+        "kind": "string",
+        "value": "Adults with synthetic condition Epsilon"
+      },
+      "critical": false
+    },
+    {
+      "kind": "eligibility",
+      "value": {
+        "kind": "structured_criterion",
+        "value": {
+          "text": "Adults aged 20 through 72 years with synthetic condition Epsilon"
+        }
+      },
+      "critical": true
+    },
+    {
+      "kind": "duration",
+      "value": {
+        "kind": "string",
+        "value": "8 weeks"
+      },
+      "critical": false
+    }
+  ],
+  "expected_blockers": [
+    {
+      "code": "TEMPLATE_TOKEN_MISSING",
+      "affected_area": "eligibility",
+      "next_action": "upload_template"
+    }
+  ],
+  "expected_next_action": "upload_template",
+  "correction": {
+    "kind": "upload_corrected_template",
+    "filename": "corrected-template.docx",
+    "section": null
+  },
+  "expected_current_versions": {
+    "synopsis": 1,
+    "template": 2
+  },
+  "expected_passages": {
+    "synopsis": "REL-TPL-05 is a synthetic study in Adults with synthetic condition Epsilon.",
+    "objectives_endpoints": "The objective is to Evaluate synthetic template recovery; the endpoint is Template recovery response at Week 8.",
+    "study_design": "Template arm receives Synthetic Compound Epsilon, 8 mg once daily, for 8 weeks.",
+    "eligibility": "Eligibility is limited to Adults aged 20 through 72 years with synthetic condition Epsilon."
+  },
+  "unsupported_edit": null,
+  "expected_artifacts": [
+    {
+      "name": "protocol.docx",
+      "media_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    },
+    {
+      "name": "traceability.csv",
+      "media_type": "text/csv"
+    },
+    {
+      "name": "scorecard.html",
+      "media_type": "text/html"
+    }
+  ]
+}

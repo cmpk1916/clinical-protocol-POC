@@ -1,0 +1,128 @@
+{
+  "schema_version": 1,
+  "study_key": "standard",
+  "study_name": "Reliability 1 - Standard synthetic study",
+  "initial_outcome": "direct_success",
+  "inputs": {
+    "synopsis": "synopsis.docx",
+    "template": "template.docx"
+  },
+  "input_sha256": {
+    "synopsis": "8d5da79f6f82fd20ff293c2f667693b34ee343c96e831dc39fd51fc354b7e67d",
+    "template": "3be81ca82b96da8c0b229799458160632aa765eabfb36be58691c2214ab28705"
+  },
+  "expected_facts": [
+    {
+      "kind": "study_identity",
+      "value": {
+        "kind": "string",
+        "value": "REL-STD-01"
+      },
+      "critical": false
+    },
+    {
+      "kind": "objective",
+      "value": {
+        "kind": "string",
+        "value": "Evaluate synthetic symptom score change"
+      },
+      "critical": false
+    },
+    {
+      "kind": "endpoint",
+      "value": {
+        "kind": "string",
+        "value": "Change from baseline"
+      },
+      "critical": false
+    },
+    {
+      "kind": "timepoint",
+      "value": {
+        "kind": "string",
+        "value": "Week 24"
+      },
+      "critical": false
+    },
+    {
+      "kind": "arm",
+      "value": {
+        "kind": "string",
+        "value": "Reference arm"
+      },
+      "critical": false
+    },
+    {
+      "kind": "intervention",
+      "value": {
+        "kind": "string",
+        "value": "Synthetic Compound Alpha"
+      },
+      "critical": false
+    },
+    {
+      "kind": "dose",
+      "value": {
+        "kind": "dose",
+        "value": "10",
+        "unit": "mg",
+        "frequency": "once daily"
+      },
+      "critical": true
+    },
+    {
+      "kind": "population",
+      "value": {
+        "kind": "string",
+        "value": "Adults with synthetic condition Alpha"
+      },
+      "critical": false
+    },
+    {
+      "kind": "eligibility",
+      "value": {
+        "kind": "structured_criterion",
+        "value": {
+          "text": "Adults aged 18 through 75 years with synthetic condition Alpha"
+        }
+      },
+      "critical": true
+    },
+    {
+      "kind": "duration",
+      "value": {
+        "kind": "string",
+        "value": "24 weeks"
+      },
+      "critical": false
+    }
+  ],
+  "expected_blockers": [],
+  "expected_next_action": "review_facts",
+  "correction": null,
+  "expected_current_versions": {
+    "synopsis": 1,
+    "template": 1
+  },
+  "expected_passages": {
+    "synopsis": "REL-STD-01 is a synthetic study in Adults with synthetic condition Alpha.",
+    "objectives_endpoints": "The objective is to Evaluate synthetic symptom score change; the endpoint is Change from baseline at Week 24.",
+    "study_design": "Reference arm receives Synthetic Compound Alpha, 10 mg once daily, for 24 weeks.",
+    "eligibility": "Eligibility is limited to Adults aged 18 through 75 years with synthetic condition Alpha."
+  },
+  "unsupported_edit": null,
+  "expected_artifacts": [
+    {
+      "name": "protocol.docx",
+      "media_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    },
+    {
+      "name": "traceability.csv",
+      "media_type": "text/csv"
+    },
+    {
+      "name": "scorecard.html",
+      "media_type": "text/html"
+    }
+  ]
+}

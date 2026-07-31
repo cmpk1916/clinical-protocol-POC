@@ -1,0 +1,143 @@
+{
+  "schema_version": 1,
+  "study_key": "unsupported-passage-edit",
+  "study_name": "Reliability 6 - Unsupported passage edit recovery",
+  "initial_outcome": "blocked_then_recover",
+  "inputs": {
+    "synopsis": "synopsis.docx",
+    "template": "template.docx"
+  },
+  "input_sha256": {
+    "synopsis": "bbc39f488e044c2c1f986af0a18b99058c32c5815bfdfe9b26b263cab5bcac48",
+    "template": "3be81ca82b96da8c0b229799458160632aa765eabfb36be58691c2214ab28705"
+  },
+  "expected_facts": [
+    {
+      "kind": "study_identity",
+      "value": {
+        "kind": "string",
+        "value": "REL-EDIT-06"
+      },
+      "critical": false
+    },
+    {
+      "kind": "objective",
+      "value": {
+        "kind": "string",
+        "value": "Evaluate synthetic passage correction"
+      },
+      "critical": false
+    },
+    {
+      "kind": "endpoint",
+      "value": {
+        "kind": "string",
+        "value": "Passage correction response"
+      },
+      "critical": false
+    },
+    {
+      "kind": "timepoint",
+      "value": {
+        "kind": "string",
+        "value": "Week 14"
+      },
+      "critical": false
+    },
+    {
+      "kind": "arm",
+      "value": {
+        "kind": "string",
+        "value": "Passage arm"
+      },
+      "critical": false
+    },
+    {
+      "kind": "intervention",
+      "value": {
+        "kind": "string",
+        "value": "Synthetic Compound Zeta"
+      },
+      "critical": false
+    },
+    {
+      "kind": "dose",
+      "value": {
+        "kind": "dose",
+        "value": "14",
+        "unit": "mg",
+        "frequency": "once daily"
+      },
+      "critical": true
+    },
+    {
+      "kind": "population",
+      "value": {
+        "kind": "string",
+        "value": "Adults with synthetic condition Zeta"
+      },
+      "critical": false
+    },
+    {
+      "kind": "eligibility",
+      "value": {
+        "kind": "structured_criterion",
+        "value": {
+          "text": "Adults aged 22 through 74 years with synthetic condition Zeta"
+        }
+      },
+      "critical": true
+    },
+    {
+      "kind": "duration",
+      "value": {
+        "kind": "string",
+        "value": "14 weeks"
+      },
+      "critical": false
+    }
+  ],
+  "expected_blockers": [
+    {
+      "code": "UNSUPPORTED_DOSE",
+      "affected_area": "study_design",
+      "next_action": "review_passages"
+    }
+  ],
+  "expected_next_action": "review_passages",
+  "correction": {
+    "kind": "regenerate_passage",
+    "filename": null,
+    "section": "study_design"
+  },
+  "expected_current_versions": {
+    "synopsis": 1,
+    "template": 1
+  },
+  "expected_passages": {
+    "synopsis": "REL-EDIT-06 is a synthetic study in Adults with synthetic condition Zeta.",
+    "objectives_endpoints": "The objective is to Evaluate synthetic passage correction; the endpoint is Passage correction response at Week 14.",
+    "study_design": "Passage arm receives Synthetic Compound Zeta, 14 mg once daily, for 14 weeks.",
+    "eligibility": "Eligibility is limited to Adults aged 22 through 74 years with synthetic condition Zeta."
+  },
+  "unsupported_edit": {
+    "section": "study_design",
+    "supported_value": "14 mg",
+    "unsupported_value": "99 mg",
+    "finding_code": "UNSUPPORTED_DOSE"
+  },
+  "expected_artifacts": [
+    {
+      "name": "protocol.docx",
+      "media_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    },
+    {
+      "name": "traceability.csv",
+      "media_type": "text/csv"
+    },
+    {
+      "name": "scorecard.html",
+      "media_type": "text/html"
+    }
+  ]
+}

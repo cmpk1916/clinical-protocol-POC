@@ -1,0 +1,128 @@
+{
+  "schema_version": 1,
+  "study_key": "value-variation",
+  "study_name": "Reliability 3 - Value variation",
+  "initial_outcome": "direct_success",
+  "inputs": {
+    "synopsis": "synopsis.docx",
+    "template": "template.docx"
+  },
+  "input_sha256": {
+    "synopsis": "f1492b49ec7739f0c9d8cc0ff83d72b4842c0d322233dce1b6e8398b02df2e37",
+    "template": "3be81ca82b96da8c0b229799458160632aa765eabfb36be58691c2214ab28705"
+  },
+  "expected_facts": [
+    {
+      "kind": "study_identity",
+      "value": {
+        "kind": "string",
+        "value": "REL-VAL-03"
+      },
+      "critical": false
+    },
+    {
+      "kind": "objective",
+      "value": {
+        "kind": "string",
+        "value": "Assess synthetic marker change"
+      },
+      "critical": false
+    },
+    {
+      "kind": "endpoint",
+      "value": {
+        "kind": "string",
+        "value": "Synthetic marker change"
+      },
+      "critical": false
+    },
+    {
+      "kind": "timepoint",
+      "value": {
+        "kind": "string",
+        "value": "Week 12"
+      },
+      "critical": false
+    },
+    {
+      "kind": "arm",
+      "value": {
+        "kind": "string",
+        "value": "Low-dose arm"
+      },
+      "critical": false
+    },
+    {
+      "kind": "intervention",
+      "value": {
+        "kind": "string",
+        "value": "Synthetic Compound Gamma"
+      },
+      "critical": false
+    },
+    {
+      "kind": "dose",
+      "value": {
+        "kind": "dose",
+        "value": "7.5",
+        "unit": "mg",
+        "frequency": "once daily"
+      },
+      "critical": true
+    },
+    {
+      "kind": "population",
+      "value": {
+        "kind": "string",
+        "value": "Adults with synthetic condition Gamma"
+      },
+      "critical": false
+    },
+    {
+      "kind": "eligibility",
+      "value": {
+        "kind": "structured_criterion",
+        "value": {
+          "text": "Adults aged 30 through 65 years with synthetic condition Gamma"
+        }
+      },
+      "critical": true
+    },
+    {
+      "kind": "duration",
+      "value": {
+        "kind": "string",
+        "value": "1 week"
+      },
+      "critical": false
+    }
+  ],
+  "expected_blockers": [],
+  "expected_next_action": "review_facts",
+  "correction": null,
+  "expected_current_versions": {
+    "synopsis": 1,
+    "template": 1
+  },
+  "expected_passages": {
+    "synopsis": "REL-VAL-03 is a synthetic study in Adults with synthetic condition Gamma.",
+    "objectives_endpoints": "The objective is to Assess synthetic marker change; the endpoint is Synthetic marker change at Week 12.",
+    "study_design": "Low-dose arm receives Synthetic Compound Gamma, 7.5 mg once daily, for 1 week.",
+    "eligibility": "Eligibility is limited to Adults aged 30 through 65 years with synthetic condition Gamma."
+  },
+  "unsupported_edit": null,
+  "expected_artifacts": [
+    {
+      "name": "protocol.docx",
+      "media_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    },
+    {
+      "name": "traceability.csv",
+      "media_type": "text/csv"
+    },
+    {
+      "name": "scorecard.html",
+      "media_type": "text/html"
+    }
+  ]
+}

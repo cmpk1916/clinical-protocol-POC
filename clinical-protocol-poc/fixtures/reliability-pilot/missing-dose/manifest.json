@@ -1,0 +1,140 @@
+{
+  "schema_version": 1,
+  "study_key": "missing-dose",
+  "study_name": "Reliability 4 - Missing dose recovery",
+  "initial_outcome": "blocked_then_recover",
+  "inputs": {
+    "synopsis": "synopsis.docx",
+    "template": "template.docx",
+    "corrected_synopsis": "corrected-synopsis.docx"
+  },
+  "input_sha256": {
+    "synopsis": "f81636b2839546d7aef0752b66260ff164faf06cc0e16993bc11647a80c92a6a",
+    "template": "3be81ca82b96da8c0b229799458160632aa765eabfb36be58691c2214ab28705",
+    "corrected_synopsis": "d1df18b8ea0f0193fd2774e31ffb90e685c9c8f409c44e30c50d829c691397d8"
+  },
+  "expected_facts": [
+    {
+      "kind": "study_identity",
+      "value": {
+        "kind": "string",
+        "value": "REL-COR-04"
+      },
+      "critical": false
+    },
+    {
+      "kind": "objective",
+      "value": {
+        "kind": "string",
+        "value": "Evaluate synthetic correction response"
+      },
+      "critical": false
+    },
+    {
+      "kind": "endpoint",
+      "value": {
+        "kind": "string",
+        "value": "Correction response"
+      },
+      "critical": false
+    },
+    {
+      "kind": "timepoint",
+      "value": {
+        "kind": "string",
+        "value": "Week 16"
+      },
+      "critical": false
+    },
+    {
+      "kind": "arm",
+      "value": {
+        "kind": "string",
+        "value": "Correction arm"
+      },
+      "critical": false
+    },
+    {
+      "kind": "intervention",
+      "value": {
+        "kind": "string",
+        "value": "Synthetic Compound Delta"
+      },
+      "critical": false
+    },
+    {
+      "kind": "dose",
+      "value": {
+        "kind": "dose",
+        "value": "12",
+        "unit": "mg",
+        "frequency": "once daily"
+      },
+      "critical": true
+    },
+    {
+      "kind": "population",
+      "value": {
+        "kind": "string",
+        "value": "Adults with synthetic condition Delta"
+      },
+      "critical": false
+    },
+    {
+      "kind": "eligibility",
+      "value": {
+        "kind": "structured_criterion",
+        "value": {
+          "text": "Adults aged 25 through 68 years with synthetic condition Delta"
+        }
+      },
+      "critical": true
+    },
+    {
+      "kind": "duration",
+      "value": {
+        "kind": "string",
+        "value": "16 weeks"
+      },
+      "critical": false
+    }
+  ],
+  "expected_blockers": [
+    {
+      "code": "SYNOPSIS_DOSE_MISSING",
+      "affected_area": "arms_interventions",
+      "next_action": "upload_synopsis"
+    }
+  ],
+  "expected_next_action": "upload_synopsis",
+  "correction": {
+    "kind": "replace_synopsis",
+    "filename": "corrected-synopsis.docx",
+    "section": null
+  },
+  "expected_current_versions": {
+    "synopsis": 2,
+    "template": 1
+  },
+  "expected_passages": {
+    "synopsis": "REL-COR-04 is a synthetic study in Adults with synthetic condition Delta.",
+    "objectives_endpoints": "The objective is to Evaluate synthetic correction response; the endpoint is Correction response at Week 16.",
+    "study_design": "Correction arm receives Synthetic Compound Delta, 12 mg once daily, for 16 weeks.",
+    "eligibility": "Eligibility is limited to Adults aged 25 through 68 years with synthetic condition Delta."
+  },
+  "unsupported_edit": null,
+  "expected_artifacts": [
+    {
+      "name": "protocol.docx",
+      "media_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    },
+    {
+      "name": "traceability.csv",
+      "media_type": "text/csv"
+    },
+    {
+      "name": "scorecard.html",
+      "media_type": "text/html"
+    }
+  ]
+}
