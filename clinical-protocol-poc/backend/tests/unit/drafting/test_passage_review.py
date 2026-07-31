@@ -27,6 +27,46 @@ def test_passage_with_blocker_cannot_be_accepted() -> None:
             PassageReviewService(session).accept(TenantContext("tenant-a", "writer-a"), passage.id, expected_version=1)
 
 
+def test_passage_with_persisted_validation_blocker_cannot_be_accepted() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(Study(id="study-a", tenant_id="tenant-a", name="Synthetic study"))
+        session.flush()
+        passage = Passage(
+            id="passage-a",
+            tenant_id="tenant-a",
+            study_id="study-a",
+            section="study_design",
+            status="ready_for_review",
+            current_version=1,
+        )
+        session.add(passage)
+        session.flush()
+        session.add(PassageVersion(
+            tenant_id="tenant-a",
+            passage_id=passage.id,
+            version=1,
+            text="Arm A receives 99 mg once daily.",
+            placeholders=[],
+            validation_findings=[{
+                "code": "UNSUPPORTED_DOSE",
+                "severity": "blocker",
+                "message": "Dose 99 mg is not an approved fact",
+                "source": "deterministic",
+            }],
+            is_current=True,
+        ))
+        session.commit()
+
+        with pytest.raises(PassageBlocked, match="blocker-free"):
+            PassageReviewService(session, validator=lambda _text: []).accept(
+                TenantContext("tenant-a", "writer-a"),
+                passage.id,
+                expected_version=1,
+            )
+
+
 def test_passage_with_support_outside_current_approved_fact_set_cannot_be_accepted() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
     Base.metadata.create_all(engine)

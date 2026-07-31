@@ -124,6 +124,7 @@ def _passage_payload(session: Session, ctx: TenantContext, passage: Passage) -> 
     return {
         "id": passage.id, "section": passage.section, "text": version.text, "status": passage.status,
         "version": passage.current_version, "placeholders": version.placeholders, "stale": passage.status == "stale",
-        "findings": [], "claims": [{"text": claim.text, **claim.metadata_json} for claim in claims],
+        "findings": version.validation_findings,
+        "claims": [{"text": claim.text, **claim.metadata_json} for claim in claims],
         "fact_support_ids": facts, "guidance_support_ids": guidance,
     }

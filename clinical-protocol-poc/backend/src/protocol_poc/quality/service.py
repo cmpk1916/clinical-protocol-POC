@@ -32,6 +32,15 @@ class QualityService:
         for version in versions:
             if version.placeholders:
                 blockers.append(QualityBlocker("REQUIRED_PLACEHOLDER", "A required placeholder remains", version.passage_id))
+            blockers.extend(
+                QualityBlocker(
+                    "UNSUPPORTED_CONTENT",
+                    finding["message"],
+                    version.passage_id,
+                )
+                for finding in version.validation_findings
+                if finding.get("severity") == "blocker"
+            )
         if not passages:
             blockers.append(QualityBlocker("VALIDATION_INCOMPLETE", "No scoped passages have completed mandatory validation", study_id))
         sections = [passage.section for passage in passages]

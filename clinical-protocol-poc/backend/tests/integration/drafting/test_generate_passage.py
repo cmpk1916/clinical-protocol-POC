@@ -5,7 +5,7 @@ from sqlalchemy import select
 from protocol_poc.app import create_app
 from protocol_poc.config import get_settings
 from protocol_poc.db import Base
-from protocol_poc.drafting.models import Passage
+from protocol_poc.drafting.models import Passage, PassageVersion
 from protocol_poc.drafting.service import DraftingService, PassageAlreadyExists
 from protocol_poc.studies.models import Fact, FactVersion, Study
 from protocol_poc.tenancy import TenantContext
@@ -155,43 +155,118 @@ def test_archived_passage_denies_stale_version_before_any_review_check(tmp_path,
     get_settings.cache_clear()
 
 
-def test_edit_fails_closed_and_derives_exact_support_from_the_template(tmp_path, monkeypatch) -> None:
+def test_unsupported_edit_persists_findings_and_regeneration_recovers_explicitly(
+    tmp_path, monkeypatch
+) -> None:
     client, app = _client(tmp_path, monkeypatch)
     _seed_approved_facts(app)
     headers = {"X-Tenant-ID": "tenant-a", "X-Actor-ID": "writer-a"}
     generated = client.post("/api/studies/study-a/passages", headers=headers, json={"section": "study_design"})
     passage_id = generated.json()["passage_id"]
 
-    for text, support_ids in (
-        ("", ["dose-a"]),
-        ("Unrelated prose.", ["dose-a"]),
-        ("Arm A receives Synthetic Intervention A, 10 mg once daily, for 24 weeks. SYN-1 is synthetic.", ["arm-a", "intervention-a", "dose-a", "duration-a"]),
-    ):
-        response = client.post(
-            f"/api/passages/{passage_id}/review",
-            headers=headers,
-            json={"action": "edit", "expected_version": 1, "text": text, "support_ids": support_ids},
-        )
-        assert response.status_code == 409
-        assert response.json() == {"detail": {"code": "PASSAGEBLOCKED"}}
+    blank = client.post(
+        f"/api/passages/{passage_id}/review",
+        headers=headers,
+        json={
+            "action": "edit", "expected_version": 1, "text": "",
+            "support_ids": ["dose-a"],
+        },
+    )
+    assert blank.status_code == 409
+    assert blank.json() == {"detail": {"code": "PASSAGEBLOCKED"}}
 
     edited = client.post(
         f"/api/passages/{passage_id}/review",
         headers=headers,
         json={
             "action": "edit", "expected_version": 1,
-            "text": generated.json()["text"],
+            "text": generated.json()["text"].replace("10 mg", "99 mg"),
             "support_ids": ["dose-a"],
         },
     )
-    listed = client.get("/api/studies/study-a/passages", headers=headers)
+    listed = client.get("/api/studies/study-a/passages", headers=headers).json()[
+        "passages"
+    ][0]
 
     assert edited.status_code == 200
-    assert listed.json()["passages"][0]["claims"] == [{
-        "text": generated.json()["text"],
-        "fact_ids": ["arm-a", "intervention-a", "dose-a", "duration-a"],
+    assert (listed["status"], listed["version"]) == ("blocked", 2)
+    assert listed["findings"] == [{
+        "code": "UNSUPPORTED_DOSE",
+        "severity": "blocker",
+        "message": "Dose 99 mg is not an approved fact",
+        "source": "deterministic",
     }]
-    assert listed.json()["passages"][0]["fact_support_ids"] == [
+    assert listed["fact_support_ids"] == [
+        "arm-a", "intervention-a", "dose-a", "duration-a",
+    ]
+
+    regenerated = client.post(
+        f"/api/passages/{passage_id}/review",
+        headers=headers,
+        json={"action": "regenerate", "expected_version": 2},
+    )
+    recovered = client.get(
+        "/api/studies/study-a/passages", headers=headers
+    ).json()["passages"][0]
+
+    assert regenerated.status_code == 200
+    assert regenerated.json()["status"] == "ready_for_review"
+    assert regenerated.json()["version"] == 3
+    assert recovered["findings"] == []
+    with app.state.session_factory() as session:  # type: ignore[attr-defined]
+        versions = list(session.scalars(
+            select(PassageVersion)
+            .where(PassageVersion.passage_id == passage_id)
+            .order_by(PassageVersion.version)
+        ))
+        assert [item.version for item in versions] == [1, 2, 3]
+        assert versions[1].validation_findings == listed["findings"]
+        assert [item.is_current for item in versions] == [False, False, True]
+    get_settings.cache_clear()
+
+
+@pytest.mark.parametrize(
+    "proposed_text",
+    [
+        "Arm A receives Invented Intervention Z, 10 mg once daily, for 24 weeks.",
+        "Unrelated prose with no approved clinical claims.",
+    ],
+)
+def test_edit_without_provable_authoritative_support_is_persisted_blocked(
+    tmp_path, monkeypatch, proposed_text: str
+) -> None:
+    client, app = _client(tmp_path, monkeypatch)
+    _seed_approved_facts(app)
+    headers = {"X-Tenant-ID": "tenant-a", "X-Actor-ID": "writer-a"}
+    generated = client.post(
+        "/api/studies/study-a/passages",
+        headers=headers,
+        json={"section": "study_design"},
+    )
+
+    edited = client.post(
+        f"/api/passages/{generated.json()['passage_id']}/review",
+        headers=headers,
+        json={
+            "action": "edit",
+            "expected_version": 1,
+            "text": proposed_text,
+            "support_ids": ["dose-a"],
+        },
+    )
+    listed = client.get(
+        "/api/studies/study-a/passages", headers=headers
+    ).json()["passages"][0]
+
+    assert edited.status_code == 200
+    assert (listed["status"], listed["version"]) == ("blocked", 2)
+    assert listed["findings"] == [{
+        "code": "UNSUPPORTED_CONTENT",
+        "severity": "blocker",
+        "message": "Edited passage cannot be proven from the approved fact set",
+        "source": "deterministic",
+    }]
+    assert listed["fact_support_ids"] == [
         "arm-a", "intervention-a", "dose-a", "duration-a",
     ]
     get_settings.cache_clear()

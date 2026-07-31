@@ -256,6 +256,34 @@ def test_orchestrator_creates_exact_artifact_set_from_validated_snapshot(tmp_pat
         }
 
 
+def test_orchestrator_denies_persisted_blocker_even_if_passage_status_is_corrupt(
+    tmp_path: Path,
+) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    storage = LocalFileStorage(tmp_path)
+    with Session(engine) as session:
+        command = seed_eligible_study(session, storage)
+        version = session.get(PassageVersion, "version-study_design")
+        assert version is not None
+        version.validation_findings = [{
+            "code": "UNSUPPORTED_DOSE",
+            "severity": "blocker",
+            "message": "Dose 99 mg is not an approved fact",
+            "source": "deterministic",
+        }]
+        session.commit()
+
+        with pytest.raises(ExportDenied) as captured:
+            ExportOrchestrator(session, storage, "renderer-v1").create(
+                TenantContext("tenant-a", "writer"), "study-a", command
+            )
+
+        assert "UNSUPPORTED_CONTENT" in captured.value.codes
+        session.rollback()
+        assert session.scalars(select(ExportArtifactRecord)).all() == []
+
+
 @pytest.mark.parametrize(
     ("version_id", "template_hash", "expected"),
     [

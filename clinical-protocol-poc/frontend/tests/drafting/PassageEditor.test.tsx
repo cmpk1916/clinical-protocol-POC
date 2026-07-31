@@ -76,7 +76,21 @@ describe("PassageEditor", () => {
 
   it("preserves edited text when validation returns findings", async () => {
     const user = userEvent.setup();
-    render(<PassageEditor passage={{ ...blockedPassage, text: "Draft" }} api={api} />);
+    const validatingApi: PassageApi = {
+      async reviewPassage(input) {
+        return {
+          ...blockedPassage,
+          text: input.text ?? "",
+          version: 2,
+        };
+      },
+    };
+    render(
+      <PassageEditor
+        passage={{ ...blockedPassage, text: "Draft", version: 1 }}
+        api={validatingApi}
+      />,
+    );
 
     await user.clear(screen.getByLabelText("Passage text"));
     await user.type(screen.getByLabelText("Passage text"), "Participants receive 20 mg.");
@@ -84,6 +98,81 @@ describe("PassageEditor", () => {
 
     assert.equal(screen.getByLabelText("Passage text").textContent, "Participants receive 20 mg.");
     assert.ok(screen.getByText("Unsupported dose: 20 mg"));
+  });
+
+  it("saves an unsupported edit and regenerates from its authoritative version", async () => {
+    const user = userEvent.setup();
+    const calls: Array<{
+      action: string;
+      expectedVersion: number;
+      text?: string;
+      supportIds?: string[];
+    }> = [];
+    const ready: DraftPassage = {
+      ...blockedPassage,
+      text: "Participants receive 10 mg once daily.",
+      status: "valid",
+      version: 1,
+      findings: [],
+      evidence: ["Approved fact support: dose-a"],
+    };
+    const commandApi: PassageApi = {
+      async reviewPassage(input) {
+        calls.push(input);
+        if (input.action === "edit") {
+          return {
+            ...ready,
+            text: input.text ?? "",
+            status: "blocked",
+            version: 2,
+            findings: [{
+              code: "UNSUPPORTED_DOSE",
+              message: "Dose 99 mg is not an approved fact",
+            }],
+          };
+        }
+        assert.equal(input.action, "regenerate");
+        return { ...ready, version: 3 };
+      },
+    };
+
+    render(<PassageEditor passage={ready} api={commandApi} />);
+    await user.clear(screen.getByLabelText("Passage text"));
+    await user.type(
+      screen.getByLabelText("Passage text"),
+      "Participants receive 99 mg once daily.",
+    );
+    await user.click(screen.getByRole("button", { name: "Validate passage" }));
+
+    assert.deepEqual(calls[0], {
+      passageId: "passage-dose",
+      action: "edit",
+      expectedVersion: 1,
+      text: "Participants receive 99 mg once daily.",
+      supportIds: ["dose-a"],
+    });
+    assert.ok(await screen.findByText("Dose 99 mg is not an approved fact"));
+    assert.ok(screen.getByText("(UNSUPPORTED_DOSE)"));
+    assert.equal(
+      screen.getByRole("button", { name: "Accept passage" }).hasAttribute("disabled"),
+      true,
+    );
+    assert.equal(
+      screen.getByRole("button", { name: "Regenerate passage" }).hasAttribute("disabled"),
+      false,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Regenerate passage" }));
+    assert.deepEqual(calls[1], {
+      passageId: "passage-dose",
+      action: "regenerate",
+      expectedVersion: 2,
+    });
+    assert.ok(await screen.findByText("No validation findings."));
+    assert.equal(
+      (screen.getByLabelText("Passage text") as HTMLTextAreaElement).value,
+      "Participants receive 10 mg once daily.",
+    );
   });
 
   it("sends an optimistic versioned accept command and refreshes from the authoritative passage", async () => {

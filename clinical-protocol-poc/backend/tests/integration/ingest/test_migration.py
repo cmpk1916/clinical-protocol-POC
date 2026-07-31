@@ -66,6 +66,9 @@ def test_files_migration_upgrade_constraints_and_downgrade(tmp_path: Path, monke
     assert "uq_passage_study_section_tenant" in {
         item["name"] for item in inspector.get_unique_constraints("passages")
     }
+    assert "validation_findings" in {
+        item["name"] for item in inspector.get_columns("passage_versions")
+    }
     assert "processing_attempts" in inspector.get_table_names()
     attempt_indexes = {
         item["name"]: item for item in inspector.get_indexes("processing_attempts")
@@ -105,7 +108,7 @@ def test_files_migration_upgrade_constraints_and_downgrade(tmp_path: Path, monke
             )
         }
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            "0012_passage_current_unique"
+            "0013_passage_validation_findings"
         )
     assert {
         "trg_processing_attempt_terminal_update",

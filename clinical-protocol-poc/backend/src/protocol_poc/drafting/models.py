@@ -47,6 +47,9 @@ class PassageVersion(Base):
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
     placeholders: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    validation_findings: Mapped[list[dict[str, str]]] = mapped_column(
+        JSON, nullable=False, default=list
+    )
     is_current: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 

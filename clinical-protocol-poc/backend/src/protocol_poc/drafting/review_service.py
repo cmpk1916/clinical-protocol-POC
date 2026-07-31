@@ -38,7 +38,12 @@ class PassageReviewService:
     def accept(self, ctx: TenantContext, passage_id: str, *, expected_version: int) -> Passage:
         passage = self._passage(ctx, passage_id, expected_version)
         version = self.session.scalar(select(PassageVersion).where(PassageVersion.passage_id == passage.id, PassageVersion.tenant_id == ctx.tenant_id, PassageVersion.is_current.is_(True)))
-        if passage.status != "ready_for_review" or version is None or version.placeholders:
+        if (
+            passage.status != "ready_for_review"
+            or version is None
+            or version.placeholders
+            or version.validation_findings
+        ):
             raise PassageBlocked("only blocker-free, current passages can be accepted")
         if not self._supports_are_current_approved(passage, version):
             raise PassageBlocked(
@@ -94,24 +99,51 @@ class PassageReviewService:
 
     def edit(self, ctx: TenantContext, passage_id: str, *, expected_version: int, text: str, support_ids: tuple[str, ...]) -> Passage:
         passage = self._passage(ctx, passage_id, expected_version)
+        if not text.strip():
+            raise PassageBlocked("edited text cannot be blank")
         output = LocalComposer().compose(
             passage.section,
             DraftContextBuilder(self.session).for_section(ctx, passage.study_id, passage.section).facts,
         )
-        if output.placeholders or not text.strip() or text != output.text:
-            raise PassageBlocked("edited text must exactly match the current deterministic section template")
         findings = self._validate(passage, text)
-        if any(item.severity == "blocker" for item in findings):
-            raise PassageBlocked("deterministic validation produced a blocker")
+        if text != output.text and not any(
+            item.severity == "blocker" for item in findings
+        ):
+            findings.append(Finding(
+                "UNSUPPORTED_CONTENT",
+                "blocker",
+                "Edited passage cannot be proven from the approved fact set",
+            ))
+        finding_payload = [
+            {
+                "code": item.code,
+                "severity": item.severity,
+                "message": item.message,
+                "source": item.source,
+            }
+            for item in findings
+        ]
         current = self.session.scalar(select(PassageVersion).where(PassageVersion.passage_id == passage.id, PassageVersion.tenant_id == ctx.tenant_id, PassageVersion.is_current.is_(True)))
         if current is None:
             raise PassageReviewError("current passage version missing")
         current.is_current = False
         self.session.flush()
         passage.current_version += 1
-        passage.status = "ready_for_review"
+        passage.status = (
+            "blocked"
+            if output.placeholders or any(item.severity == "blocker" for item in findings)
+            else "ready_for_review"
+        )
         passage.invalidation_reason = None
-        version = PassageVersion(tenant_id=ctx.tenant_id, passage_id=passage.id, version=passage.current_version, text=text, placeholders=[], is_current=True)
+        version = PassageVersion(
+            tenant_id=ctx.tenant_id,
+            passage_id=passage.id,
+            version=passage.current_version,
+            text=text,
+            placeholders=list(output.placeholders),
+            validation_findings=finding_payload,
+            is_current=True,
+        )
         self.session.add(version)
         self.session.flush()
         self.session.add_all([
@@ -122,6 +154,7 @@ class PassageReviewService:
             SupportLink(tenant_id=ctx.tenant_id, passage_version_id=version.id, support_type="fact", support_id=support_id)
             for support_id in output.fact_ids
         ])
+        _ = support_ids
         self.audit.append(ctx, "passage.edited", "passage", passage.id, {"version": passage.current_version, "finding_codes": [item.code for item in findings]})
         return passage
 

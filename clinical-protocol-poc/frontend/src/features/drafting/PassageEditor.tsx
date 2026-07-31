@@ -19,6 +19,7 @@ export function PassageEditor({
 }>) {
   const [text, setText] = useState(passage.text);
   const [findings, setFindings] = useState<PassageFinding[]>(passage.findings);
+  const [currentVersion, setCurrentVersion] = useState(passage.version);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const blocked = readOnly || passage.stale || findings.length > 0 || passage.status === "draft" || passage.status === "blocked" || passage.status === "rejected" || passage.status === "accepted";
@@ -27,7 +28,7 @@ export function PassageEditor({
     .filter((item) => item !== "");
 
   async function command(action: "accept" | "edit" | "reject" | "regenerate") {
-    if (!api.reviewPassage || passage.version === undefined) {
+    if (!api.reviewPassage || currentVersion === undefined) {
       setError("Passage review is unavailable until the saved passage is refreshed.");
       return;
     }
@@ -37,12 +38,13 @@ export function PassageEditor({
       const updated = await api.reviewPassage({
         passageId: passage.id,
         action,
-        expectedVersion: passage.version,
+        expectedVersion: currentVersion,
         ...(action === "edit" ? { text, supportIds } : {}),
         ...(action === "reject" ? { rationale: "Synthetic writer rejection." } : {}),
       });
       setText(updated.text);
       setFindings(updated.findings);
+      setCurrentVersion(updated.version);
       await onUpdated?.(updated);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Unable to save passage review");
@@ -70,7 +72,9 @@ export function PassageEditor({
         {findings.length ? (
           <ul>
             {findings.map((finding) => (
-              <li key={`${finding.code}-${finding.message}`}>{finding.message}</li>
+              <li key={`${finding.code}-${finding.message}`}>
+                {finding.message} <span className="finding-code">({finding.code})</span>
+              </li>
             ))}
           </ul>
         ) : (
@@ -83,18 +87,7 @@ export function PassageEditor({
         <button
           type="button"
           disabled={readOnly || busy}
-          onClick={async () => {
-            if (api.reviewPassage) {
-              await command("edit");
-              return;
-            }
-            if (!api.validatePassage) {
-              setError("Passage validation is unavailable until the saved passage is refreshed.");
-              return;
-            }
-            const result = await api.validatePassage({ passageId: passage.id, text });
-            setFindings(result.findings);
-          }}
+          onClick={() => void command("edit")}
         >
           Validate passage
         </button>

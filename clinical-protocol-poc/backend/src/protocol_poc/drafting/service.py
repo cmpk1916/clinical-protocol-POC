@@ -98,6 +98,7 @@ class DraftingService:
             version=passage.current_version,
             text=output.text,
             placeholders=list(output.placeholders),
+            validation_findings=[],
             is_current=True,
         )
         self.session.add(version)
