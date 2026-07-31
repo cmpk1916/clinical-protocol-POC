@@ -110,14 +110,17 @@ def test_corrected_or_valid_synopses_match_all_gold_facts(tmp_path: Path) -> Non
         assert DocumentContract().validate_synopsis(evidence) == ()
         proposal = LocalExtractor().extract(evidence)
         assert proposal.findings == ()
-        assert [
+        extracted = [
             {
                 "kind": candidate.kind,
                 "value": candidate.value_json,
                 "critical": candidate.critical,
             }
             for candidate in proposal.candidates
-        ] == [fact.model_dump() for fact in manifest.expected_facts]
+        ]
+        assert sorted(extracted, key=lambda item: not item["critical"]) == [
+            fact.model_dump() for fact in manifest.expected_facts
+        ]
 
 
 def test_initial_mistake_documents_fail_for_only_the_declared_reason(

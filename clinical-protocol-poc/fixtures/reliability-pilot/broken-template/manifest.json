@@ -15,6 +15,26 @@
   },
   "expected_facts": [
     {
+      "kind": "dose",
+      "value": {
+        "kind": "dose",
+        "value": "8",
+        "unit": "mg",
+        "frequency": "once daily"
+      },
+      "critical": true
+    },
+    {
+      "kind": "eligibility",
+      "value": {
+        "kind": "structured_criterion",
+        "value": {
+          "text": "Adults aged 20 through 72 years with synthetic condition Epsilon"
+        }
+      },
+      "critical": true
+    },
+    {
       "kind": "study_identity",
       "value": {
         "kind": "string",
@@ -63,32 +83,12 @@
       "critical": false
     },
     {
-      "kind": "dose",
-      "value": {
-        "kind": "dose",
-        "value": "8",
-        "unit": "mg",
-        "frequency": "once daily"
-      },
-      "critical": true
-    },
-    {
       "kind": "population",
       "value": {
         "kind": "string",
         "value": "Adults with synthetic condition Epsilon"
       },
       "critical": false
-    },
-    {
-      "kind": "eligibility",
-      "value": {
-        "kind": "structured_criterion",
-        "value": {
-          "text": "Adults aged 20 through 72 years with synthetic condition Epsilon"
-        }
-      },
-      "critical": true
     },
     {
       "kind": "duration",

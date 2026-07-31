@@ -15,6 +15,26 @@
   },
   "expected_facts": [
     {
+      "kind": "dose",
+      "value": {
+        "kind": "dose",
+        "value": "12",
+        "unit": "mg",
+        "frequency": "once daily"
+      },
+      "critical": true
+    },
+    {
+      "kind": "eligibility",
+      "value": {
+        "kind": "structured_criterion",
+        "value": {
+          "text": "Adults aged 25 through 68 years with synthetic condition Delta"
+        }
+      },
+      "critical": true
+    },
+    {
       "kind": "study_identity",
       "value": {
         "kind": "string",
@@ -63,32 +83,12 @@
       "critical": false
     },
     {
-      "kind": "dose",
-      "value": {
-        "kind": "dose",
-        "value": "12",
-        "unit": "mg",
-        "frequency": "once daily"
-      },
-      "critical": true
-    },
-    {
       "kind": "population",
       "value": {
         "kind": "string",
         "value": "Adults with synthetic condition Delta"
       },
       "critical": false
-    },
-    {
-      "kind": "eligibility",
-      "value": {
-        "kind": "structured_criterion",
-        "value": {
-          "text": "Adults aged 25 through 68 years with synthetic condition Delta"
-        }
-      },
-      "critical": true
     },
     {
       "kind": "duration",

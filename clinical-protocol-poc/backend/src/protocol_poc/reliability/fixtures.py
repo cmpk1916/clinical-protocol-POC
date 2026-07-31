@@ -145,7 +145,12 @@ def _facts(source: SynopsisSource) -> tuple[ExpectedFact, ...]:
     )
     if source.duration is not None:
         facts += (_string_fact("duration", source.duration),)
-    return facts
+    return tuple(
+        fact
+        for critical in (True, False)
+        for fact in facts
+        if fact.critical is critical
+    )
 
 
 def _passages(source: SynopsisSource) -> dict[str, str]:

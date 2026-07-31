@@ -13,6 +13,26 @@
   },
   "expected_facts": [
     {
+      "kind": "dose",
+      "value": {
+        "kind": "dose",
+        "value": "10",
+        "unit": "mg",
+        "frequency": "once daily"
+      },
+      "critical": true
+    },
+    {
+      "kind": "eligibility",
+      "value": {
+        "kind": "structured_criterion",
+        "value": {
+          "text": "Adults aged 18 through 75 years with synthetic condition Alpha"
+        }
+      },
+      "critical": true
+    },
+    {
       "kind": "study_identity",
       "value": {
         "kind": "string",
@@ -61,32 +81,12 @@
       "critical": false
     },
     {
-      "kind": "dose",
-      "value": {
-        "kind": "dose",
-        "value": "10",
-        "unit": "mg",
-        "frequency": "once daily"
-      },
-      "critical": true
-    },
-    {
       "kind": "population",
       "value": {
         "kind": "string",
         "value": "Adults with synthetic condition Alpha"
       },
       "critical": false
-    },
-    {
-      "kind": "eligibility",
-      "value": {
-        "kind": "structured_criterion",
-        "value": {
-          "text": "Adults aged 18 through 75 years with synthetic condition Alpha"
-        }
-      },
-      "critical": true
     },
     {
       "kind": "duration",
