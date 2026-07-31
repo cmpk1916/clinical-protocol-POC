@@ -52,6 +52,18 @@ def test_all_six_self_service_journeys_recover_and_export_safely(
     assert result.exported_unsupported_clinical_fact_count == 0
     assert sum(item.initial_export_denied for item in result.studies) == 3
     assert sum(bool(item.artifacts) for item in result.studies) == 6
+    for study in result.studies:
+        final_statuses = {
+            check.name: check.actual
+            for check in study.checks
+            if check.name.endswith(".final_status")
+        }
+        assert final_statuses == {
+            "passage.synopsis.final_status": "accepted",
+            "passage.objectives_endpoints.final_status": "accepted",
+            "passage.study_design.final_status": "accepted",
+            "passage.eligibility.final_status": "accepted",
+        }
     manifests = load_pilot_manifests(FIXTURE_ROOT)
     for manifest, study in zip(manifests, result.studies, strict=True):
         fact_check = next(check for check in study.checks if check.name == "facts")

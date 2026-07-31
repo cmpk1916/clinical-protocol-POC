@@ -592,7 +592,18 @@ class PilotRunner:
         snapshot_id = str(export_payload["snapshotId"])
         final_passages = self.client.list_passages(state.study_id)
         final_items = _items(final_passages.get("passages"), "final passages")
-        final_text = {str(item["section"]): str(item["text"]) for item in final_items}
+        final_by_section = {str(item["section"]): item for item in final_items}
+        final_text = {
+            section: str(final_by_section[section]["text"]) for section in SECTIONS
+        }
+        checks.extend(
+            _check(
+                f"passage.{section}.final_status",
+                "accepted",
+                final_by_section[section].get("status"),
+            )
+            for section in SECTIONS
+        )
         return (
             tuple(checks),
             artifacts,
