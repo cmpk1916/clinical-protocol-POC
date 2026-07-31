@@ -13,6 +13,9 @@ from protocol_poc.studies.document_contract import DocumentContract
 from protocol_poc.studies.local_extractor import LocalExtractor
 
 
+CHECKED_IN_FIXTURES = Path(__file__).parents[4] / "fixtures" / "reliability-pilot"
+
+
 @dataclass(frozen=True)
 class Evidence:
     id: str
@@ -48,6 +51,14 @@ def test_builder_is_byte_identical_and_hashes_match_manifests(tmp_path: Path) ->
             assert sha256((pack / filename).read_bytes()).hexdigest() == (
                 manifest.input_sha256[logical_name]
             )
+
+
+def test_checked_in_packs_exactly_match_a_fresh_build(tmp_path: Path) -> None:
+    rebuilt = tmp_path / "rebuilt"
+
+    build_reliability_fixtures(rebuilt)
+
+    assert _files(CHECKED_IN_FIXTURES) == _files(rebuilt)
 
 
 def test_six_packs_have_only_the_declared_files_and_outcomes(tmp_path: Path) -> None:
