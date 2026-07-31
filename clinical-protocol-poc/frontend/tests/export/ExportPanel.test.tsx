@@ -24,7 +24,7 @@ const exportCommand: ExportCommand = {
 
 describe("ExportPanel", () => {
   it("shows every blocker and keeps export disabled until the server gate is clear", () => {
-    render(<ExportPanel studyId="study-1" state={blockedState} exportCommand={exportCommand} api={{ createExport: async () => blockedState }} />);
+    render(<ExportPanel studyId="study-1" state={blockedState} exportCommand={exportCommand} api={{ loadLatest: async () => blockedState, createExport: async () => blockedState }} />);
 
     assert.ok(screen.getByRole("alert"));
     assert.ok(screen.getByText("Unsupported dose claim must be resolved"));
@@ -34,6 +34,9 @@ describe("ExportPanel", () => {
   it("shows artifact names, hashes, and the shared snapshot after export succeeds", async () => {
     const user = userEvent.setup();
     const api: ExportApi = {
+      async loadLatest() {
+        return { blockers: [], snapshotId: null, artifacts: [] };
+      },
       async createExport(_studyId, command) {
         assert.deepEqual(command, exportCommand);
         return {
@@ -57,31 +60,28 @@ describe("ExportPanel", () => {
     assert.match(screen.getByTestId("artifact-snapshot-ids").textContent ?? "", /snapshot-123/);
   });
 
-  it("replaces stale artifacts with server blockers after a failed export", async () => {
-    const user = userEvent.setup();
-    const api: ExportApi = {
-      async createExport(_studyId, command) {
-        assert.deepEqual(command, exportCommand);
-        return { blockers: ["STUDY_ARCHIVED"], snapshotId: null, artifacts: [] };
-      },
-    };
+  it("shows a saved export without offering duplicate creation", () => {
     render(
       <ExportPanel
         studyId="study-1"
         exportCommand={exportCommand}
         state={{
           blockers: [],
-          snapshotId: "old-snapshot",
-          artifacts: [{ id: "old", name: "protocol.docx", mediaType: "application/docx", sha256: "old", snapshotId: "old-snapshot", downloadUrl: "/old" }],
+          snapshotId: "snapshot-saved",
+          artifacts: [{
+            id: "docx",
+            name: "protocol.docx",
+            mediaType: "application/docx",
+            sha256: "a".repeat(64),
+            snapshotId: "snapshot-saved",
+            downloadUrl: "/api/local/export-artifacts/docx",
+          }],
         }}
-        api={api}
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Create export" }));
-
-    assert.ok(screen.getByText("STUDY_ARCHIVED"));
-    assert.equal(screen.queryByRole("link", { name: "Download protocol.docx" }), null);
+    assert.ok(screen.getByRole("link", { name: "Download protocol.docx" }));
+    assert.equal(screen.queryByRole("button", { name: "Create export" }), null);
   });
 
   it("adopts refreshed authority state and clears prior artifacts on rerender", () => {
@@ -131,6 +131,37 @@ describe("ExportPanel", () => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(exportCommand),
         },
+      });
+      assert.equal(result.artifacts[0]?.downloadUrl, "/api/local/export-artifacts/docx");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("loads the latest export through the local proxy and rewrites downloads", async () => {
+    const originalFetch = globalThis.fetch;
+    let request: { url: string; init?: RequestInit } | null = null;
+    globalThis.fetch = async (url, init) => {
+      request = { url: String(url), init };
+      return Response.json({
+        blockers: [],
+        snapshotId: "snapshot-saved",
+        artifacts: [{
+          id: "docx",
+          name: "protocol.docx",
+          mediaType: "application/docx",
+          sha256: "a".repeat(64),
+          snapshotId: "snapshot-saved",
+          downloadUrl: "/api/export-artifacts/docx",
+        }],
+      });
+    };
+    try {
+      const result = await protocolExportApi.loadLatest("study-1");
+
+      assert.deepEqual(request, {
+        url: "/api/local/studies/study-1/exports/latest",
+        init: undefined,
       });
       assert.equal(result.artifacts[0]?.downloadUrl, "/api/local/export-artifacts/docx");
     } finally {

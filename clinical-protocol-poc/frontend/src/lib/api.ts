@@ -438,7 +438,26 @@ export const protocolDraftingApi: DraftingApi = {
   },
 };
 
+function localExportState(payload: ExportState): ExportState {
+  return {
+    ...payload,
+    artifacts: payload.artifacts.map((artifact) => ({
+      ...artifact,
+      downloadUrl: `/api/local/export-artifacts/${encodeURIComponent(artifact.id)}`,
+    })),
+  };
+}
+
 export const protocolExportApi: ExportApi = {
+  async loadLatest(studyId) {
+    const response = await fetch(
+      `/api/local/studies/${encodeURIComponent(studyId)}/exports/latest`,
+    );
+    if (!response.ok) {
+      throw new Error(await errorMessage(response, "Unable to load saved export"));
+    }
+    return localExportState((await response.json()) as ExportState);
+  },
   async createExport(studyId, command) {
     const response = await fetch(`/api/local/studies/${encodeURIComponent(studyId)}/exports`, {
       method: "POST",
@@ -455,13 +474,7 @@ export const protocolExportApi: ExportApi = {
         artifacts: [],
       };
     }
-    return {
-      ...payload,
-      artifacts: payload.artifacts.map((artifact) => ({
-        ...artifact,
-        downloadUrl: `/api/local/export-artifacts/${encodeURIComponent(artifact.id)}`,
-      })),
-    };
+    return localExportState(payload);
   },
 };
 

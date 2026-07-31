@@ -6,7 +6,7 @@ import { ProtocolNavigator } from "../../../../features/drafting/ProtocolNavigat
 import { PassageEditor } from "../../../../features/drafting/PassageEditor";
 import { Scorecard } from "../../../../features/quality/Scorecard";
 import { ExportPanel } from "../../../../features/export/ExportPanel";
-import { protocolDraftingApi, protocolWorkspaceApi } from "../../../../lib/api";
+import { protocolDraftingApi, protocolExportApi, protocolWorkspaceApi } from "../../../../lib/api";
 import type { DraftPassage, ExportState, PassageApi, QualityScorecard, WorkspaceSummary } from "../../../../lib/types";
 
 const sections = [
@@ -23,6 +23,7 @@ type DraftState = {
   readOnly: boolean;
   exportCommand: WorkspaceSummary["exportCommand"];
   exportBlockers: string[];
+  exportState: ExportState;
 };
 
 export default function DraftPage({
@@ -37,16 +38,18 @@ function DraftWorkspace({ studyId }: Readonly<{ studyId: string }>) {
   const [generating, setGenerating] = useState<Section | null>(null);
 
   const refresh = useCallback(async () => {
-    const [passages, quality, workspace] = await Promise.all([
+    const [passages, quality, workspace, exportState] = await Promise.all([
       protocolDraftingApi.getPassages(studyId),
       protocolDraftingApi.getQuality(studyId),
       protocolWorkspaceApi.getWorkspace(studyId),
+      protocolExportApi.loadLatest(studyId),
     ]);
     setState({
       ...passages,
       quality,
       exportCommand: workspace.exportCommand,
       exportBlockers: workspace.blockers.map((blocker) => blocker.code),
+      exportState,
     });
   }, [studyId]);
 
@@ -121,7 +124,12 @@ function DraftWorkspace({ studyId }: Readonly<{ studyId: string }>) {
       <ExportPanel
         studyId={studyId}
         exportCommand={state.exportCommand}
-        state={{ blockers: state.exportBlockers, snapshotId: null, artifacts: [] } satisfies ExportState}
+        state={{
+          ...state.exportState,
+          blockers: state.exportState.snapshotId
+            ? state.exportState.blockers
+            : state.exportBlockers,
+        } satisfies ExportState}
       />
     </main>
   );

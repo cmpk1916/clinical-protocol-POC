@@ -21,7 +21,9 @@ export function ExportPanel({
   useEffect(() => {
     setExportState(state);
   }, [state, exportCommand, studyId]);
-  const blocked = exportState.blockers.length > 0 || exportCommand === null;
+  const hasSavedExport = exportState.snapshotId !== null;
+  const blocked = !hasSavedExport
+    && (exportState.blockers.length > 0 || exportCommand === null);
 
   async function createExport() {
     if (exportCommand === null) return;
@@ -49,13 +51,15 @@ export function ExportPanel({
           </ul>
         </div>
       ) : null}
-      <button
-        type="button"
-        disabled={blocked}
-        onClick={() => void createExport()}
-      >
-        Create export
-      </button>
+      {!hasSavedExport ? (
+        <button
+          type="button"
+          disabled={blocked}
+          onClick={() => void createExport()}
+        >
+          Create export
+        </button>
+      ) : null}
       {exportState.snapshotId ? (
         <section aria-label="Export artifacts">
           <h3>Artifacts</h3>

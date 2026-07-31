@@ -174,5 +174,6 @@ export type ExportState = {
 };
 
 export type ExportApi = {
+  loadLatest(studyId: string): Promise<ExportState>;
   createExport(studyId: string, command: ExportCommand): Promise<ExportState>;
 };
