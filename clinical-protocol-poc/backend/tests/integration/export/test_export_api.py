@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 
@@ -16,11 +17,212 @@ from protocol_poc.export.models import ExportArtifactRecord, ExportSnapshot
 from protocol_poc.export.orchestration import ExportOrchestrator, ExportResult
 from protocol_poc.export.routes import database_session
 from protocol_poc.files.service import LocalFileStorage
+from protocol_poc.studies.models import Study
 from protocol_poc.tenancy import TenantContext
 from tests.integration.export.test_artifact_orchestration import seed_eligible_study
 
 
 HEADERS = {"X-Tenant-ID": "tenant-a", "X-Actor-ID": "writer"}
+
+
+def _export_api_client(
+    session: Session,
+    tmp_path: Path,
+    monkeypatch: object,
+) -> TestClient:
+    import protocol_poc.export.routes as routes
+
+    settings = Settings(
+        local_storage_path=str(tmp_path), allow_insecure_identity_headers=True,
+        environment="test",
+    )
+    monkeypatch.setattr(routes, "get_settings", lambda: settings)  # type: ignore[attr-defined]
+    app = create_app()
+    app.dependency_overrides[database_session] = lambda: session
+    return TestClient(app)
+
+
+def _artifact(
+    *,
+    artifact_id: str,
+    snapshot_id: str,
+    filename: str,
+    media_type: str,
+    sha256_hex: str,
+) -> ExportArtifactRecord:
+    return ExportArtifactRecord(
+        id=artifact_id,
+        tenant_id="tenant-a",
+        snapshot_id=snapshot_id,
+        filename=filename,
+        media_type=media_type,
+        renderer_version="renderer-v1",
+        size_bytes=1,
+        sha256_hex=sha256_hex,
+        storage_key=f"exports/{snapshot_id}/{artifact_id}/{filename}",
+    )
+
+
+def test_latest_export_api_returns_newest_complete_snapshot_in_contract_order(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session = Session(engine)
+    session.add(Study(id="study-a", tenant_id="tenant-a", name="Study A"))
+    session.add_all([
+        ExportSnapshot(
+            id="snapshot-old", tenant_id="tenant-a", study_id="study-a",
+            study_version=1, renderer_version="renderer-v1",
+            created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        ),
+        ExportSnapshot(
+            id="snapshot-new", tenant_id="tenant-a", study_id="study-a",
+            study_version=2, renderer_version="renderer-v1",
+            created_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+        ),
+    ])
+    session.flush()
+    session.add_all([
+        _artifact(
+            artifact_id="new-scorecard", snapshot_id="snapshot-new",
+            filename="scorecard.html", media_type="text/html", sha256_hex="3" * 64,
+        ),
+        _artifact(
+            artifact_id="new-protocol", snapshot_id="snapshot-new",
+            filename="protocol.docx",
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            sha256_hex="1" * 64,
+        ),
+        _artifact(
+            artifact_id="new-traceability", snapshot_id="snapshot-new",
+            filename="traceability.csv", media_type="text/csv", sha256_hex="2" * 64,
+        ),
+    ])
+    session.commit()
+
+    response = _export_api_client(session, tmp_path, monkeypatch).get(
+        "/api/studies/study-a/exports/latest", headers=HEADERS
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "snapshotId": "snapshot-new",
+        "blockers": [],
+        "artifacts": [
+            {
+                "id": "new-protocol",
+                "name": "protocol.docx",
+                "mediaType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "sha256": "1" * 64,
+                "snapshotId": "snapshot-new",
+                "downloadUrl": "/api/export-artifacts/new-protocol",
+            },
+            {
+                "id": "new-traceability",
+                "name": "traceability.csv",
+                "mediaType": "text/csv",
+                "sha256": "2" * 64,
+                "snapshotId": "snapshot-new",
+                "downloadUrl": "/api/export-artifacts/new-traceability",
+            },
+            {
+                "id": "new-scorecard",
+                "name": "scorecard.html",
+                "mediaType": "text/html",
+                "sha256": "3" * 64,
+                "snapshotId": "snapshot-new",
+                "downloadUrl": "/api/export-artifacts/new-scorecard",
+            },
+        ],
+    }
+    session.close()
+
+
+def test_latest_export_api_returns_empty_state_for_existing_study_without_export(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session = Session(engine)
+    session.add(Study(id="study-empty", tenant_id="tenant-a", name="Empty Study"))
+    session.commit()
+
+    response = _export_api_client(session, tmp_path, monkeypatch).get(
+        "/api/studies/study-empty/exports/latest", headers=HEADERS
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"snapshotId": None, "blockers": [], "artifacts": []}
+    session.close()
+
+
+def test_latest_export_api_hides_missing_and_cross_tenant_studies(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session = Session(engine)
+    session.add(Study(id="study-a", tenant_id="tenant-a", name="Study A"))
+    session.commit()
+    client = _export_api_client(session, tmp_path, monkeypatch)
+
+    missing = client.get("/api/studies/missing/exports/latest", headers=HEADERS)
+    hidden = client.get(
+        "/api/studies/study-a/exports/latest",
+        headers={"X-Tenant-ID": "tenant-b", "X-Actor-ID": "writer"},
+    )
+
+    assert missing.status_code == 404
+    assert missing.json() == {"detail": {"code": "STUDY_NOT_FOUND"}}
+    assert hidden.status_code == 404
+    assert hidden.json() == {"detail": {"code": "STUDY_NOT_FOUND"}}
+    session.close()
+
+
+def test_latest_export_api_fails_closed_for_incomplete_latest_snapshot(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session = Session(engine)
+    session.add(Study(id="study-partial", tenant_id="tenant-a", name="Partial Study"))
+    session.add(ExportSnapshot(
+        id="snapshot-partial", tenant_id="tenant-a", study_id="study-partial",
+        study_version=1, renderer_version="renderer-v1",
+    ))
+    session.flush()
+    session.add(_artifact(
+        artifact_id="partial-protocol", snapshot_id="snapshot-partial",
+        filename="protocol.docx",
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        sha256_hex="4" * 64,
+    ))
+    session.commit()
+
+    response = _export_api_client(session, tmp_path, monkeypatch).get(
+        "/api/studies/study-partial/exports/latest", headers=HEADERS
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": {"code": "EXPORT_INTEGRITY_FAILED"}}
+    session.close()
 
 
 def test_export_api_returns_descriptors_and_downloads_exact_bytes(

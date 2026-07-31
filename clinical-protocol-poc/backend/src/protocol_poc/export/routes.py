@@ -9,11 +9,12 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from protocol_poc.config import get_settings
-from protocol_poc.export.artifact_service import ExportArtifactRepository
+from protocol_poc.export.artifact_service import ArtifactDescriptor, ExportArtifactRepository
 from protocol_poc.export.orchestration import ExportCommand, ExportOrchestrator
 from protocol_poc.export.service import ExportDenied
 from protocol_poc.files.service import LocalFileStorage
 from protocol_poc.identity import IdentityVerificationError, verify_identity_headers
+from protocol_poc.studies.service import StudyNotFound, StudyService
 from protocol_poc.tenancy import TenantContext
 
 
@@ -48,7 +49,7 @@ class ArtifactResponse(BaseModel):
 class ExportResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True, alias_generator=_camel)
 
-    snapshot_id: str
+    snapshot_id: str | None
     blockers: list[str]
     artifacts: list[ArtifactResponse]
 
@@ -74,6 +75,59 @@ def _identity(request: Request) -> TenantContext:
         raise HTTPException(
             status_code=401, detail={"code": "IDENTITY_INVALID"}
         ) from error
+
+
+def _export_response(
+    snapshot_id: str | None,
+    artifacts: tuple[ArtifactDescriptor, ...],
+) -> ExportResponse:
+    return ExportResponse(
+        snapshot_id=snapshot_id,
+        blockers=[],
+        artifacts=[
+            ArtifactResponse(
+                id=item.id,
+                name=item.name,
+                media_type=item.media_type,
+                sha256=item.sha256,
+                snapshot_id=item.snapshot_id,
+                download_url=item.download_url,
+            )
+            for item in artifacts
+        ],
+    )
+
+
+@router.get(
+    "/studies/{study_id}/exports/latest",
+    response_model=ExportResponse,
+    response_model_by_alias=True,
+)
+def latest_export(
+    study_id: str,
+    request: Request,
+    session: Session = Depends(database_session),
+) -> ExportResponse:
+    ctx = _identity(request)
+    try:
+        StudyService(session).get(ctx, study_id)
+        latest = ExportArtifactRepository(
+            session,
+            LocalFileStorage(Path(get_settings().local_storage_path)),
+        ).latest_for_study(ctx, study_id)
+    except StudyNotFound as error:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "STUDY_NOT_FOUND"},
+        ) from error
+    except OSError as error:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "EXPORT_INTEGRITY_FAILED"},
+        ) from error
+    if latest is None:
+        return _export_response(None, ())
+    return _export_response(latest.snapshot_id, latest.descriptors)
 
 
 @router.post(
@@ -118,21 +172,7 @@ def export(
             status_code=409,
             detail={"code": "EXPORT_FAILED", "blockers": ["EXPORT_FAILED"]},
         ) from error
-    return ExportResponse(
-        snapshot_id=result.snapshot_id,
-        blockers=[],
-        artifacts=[
-            ArtifactResponse(
-                id=item.id,
-                name=item.name,
-                media_type=item.media_type,
-                sha256=item.sha256,
-                snapshot_id=item.snapshot_id,
-                download_url=item.download_url,
-            )
-            for item in result.artifacts
-        ],
-    )
+    return _export_response(result.snapshot_id, result.artifacts)
 
 
 @router.get("/export-artifacts/{artifact_id}")

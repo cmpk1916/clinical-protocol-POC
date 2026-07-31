@@ -30,6 +30,12 @@ class PersistedArtifacts:
     written_storage_keys: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class LatestExport:
+    snapshot_id: str
+    descriptors: tuple[ArtifactDescriptor, ...]
+
+
 class ExportArtifactRepository:
     def __init__(self, session: Session, storage: FileStorage) -> None:
         self._session = session
@@ -107,6 +113,42 @@ class ExportArtifactRepository:
         if len(content) != record.size_bytes or sha256(content).hexdigest() != record.sha256_hex:
             raise OSError("export artifact integrity check failed")
         return record, content
+
+    def latest_for_study(
+        self,
+        ctx: TenantContext,
+        study_id: str,
+    ) -> LatestExport | None:
+        context = require_tenant_context(ctx)
+        snapshot = self._session.scalar(
+            select(ExportSnapshot)
+            .where(
+                ExportSnapshot.tenant_id == context.tenant_id,
+                ExportSnapshot.study_id == study_id,
+            )
+            .order_by(ExportSnapshot.created_at.desc(), ExportSnapshot.id.desc())
+            .limit(1)
+        )
+        if snapshot is None:
+            return None
+        records = list(
+            self._session.scalars(
+                select(ExportArtifactRecord).where(
+                    ExportArtifactRecord.tenant_id == context.tenant_id,
+                    ExportArtifactRecord.snapshot_id == snapshot.id,
+                )
+            )
+        )
+        records_by_name = {record.filename: record for record in records}
+        if (
+            set(records_by_name) != set(EXPECTED_FILENAMES)
+            or len(records) != len(EXPECTED_FILENAMES)
+        ):
+            raise OSError("latest export artifact set is incomplete")
+        return LatestExport(
+            snapshot.id,
+            tuple(self._descriptor(records_by_name[name]) for name in EXPECTED_FILENAMES),
+        )
 
     def delete_storage_keys(self, storage_keys: tuple[str, ...]) -> None:
         for storage_key in reversed(storage_keys):
