@@ -146,7 +146,9 @@ def test_workspace_returns_the_current_conformed_template_export_command(
     assert summary.export_command.template_hash == "b" * 64
 
 
-def test_workspace_reports_latest_failed_attempt_findings_and_retry(session: Session) -> None:
+def test_workspace_recommends_corrected_synopsis_for_source_findings(
+    session: Session,
+) -> None:
     ctx, study_id = _scenario(session, "needs_processing")
     synopsis = WorkspaceSummaryService(session).get(ctx, study_id).inputs["synopsis"]
     assert synopsis is not None
@@ -163,7 +165,7 @@ def test_workspace_reports_latest_failed_attempt_findings_and_retry(session: Ses
             findings_json=[
                 {
                     "code": "SYNOPSIS_DOSE_MISSING",
-                    "field": "dose",
+                    "field": "arms_interventions",
                     "message": "A dose is required.",
                 }
             ],
@@ -173,11 +175,45 @@ def test_workspace_reports_latest_failed_attempt_findings_and_retry(session: Ses
 
     summary = WorkspaceSummaryService(session).get(ctx, study_id)
 
-    assert summary.next_action.kind == "retry_processing"
-    assert summary.next_action.target_id == "attempt-failed"
+    assert summary.next_action.kind == "upload_synopsis"
+    assert summary.next_action.label == "Upload corrected synopsis"
+    assert summary.next_action.target_id is None
+    assert summary.blockers[0].affected_area == "arms_interventions"
+    assert summary.blockers[0].blocking_reason == (
+        "Synopsis processing cannot succeed until the source content is corrected."
+    )
     assert [(item.code, item.message) for item in summary.blockers] == [
         ("SYNOPSIS_DOSE_MISSING", "A dose is required.")
     ]
+
+
+def test_workspace_retries_a_transient_technical_processing_failure(
+    session: Session,
+) -> None:
+    ctx, study_id = _scenario(session, "needs_processing")
+    synopsis = WorkspaceSummaryService(session).get(ctx, study_id).inputs["synopsis"]
+    assert synopsis is not None
+    session.add(
+        ProcessingAttempt(
+            id="attempt-technical",
+            tenant_id="tenant",
+            study_id=study_id,
+            synopsis_version_id=synopsis.version_id,
+            extractor_name="local-rules",
+            extractor_version="local-rules-v1",
+            status="failed",
+            error_code="processor_unavailable",
+            findings_json=[],
+        )
+    )
+    session.flush()
+
+    summary = WorkspaceSummaryService(session).get(ctx, study_id)
+
+    assert summary.next_action.kind == "retry_processing"
+    assert summary.next_action.label == "Retry synopsis processing"
+    assert summary.next_action.target_id == "attempt-technical"
+    assert summary.blockers[0].code == "PROCESSING_FAILED"
 
 
 def test_archived_workspace_remains_viewable_and_is_read_only(session: Session) -> None:

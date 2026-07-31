@@ -23,6 +23,8 @@ StepStatus = Literal["complete", "current", "blocked", "upcoming"]
 class WorkspaceBlocker:
     code: str
     message: str
+    affected_area: str | None = None
+    blocking_reason: str = "Progress is blocked until this finding is resolved."
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,12 +249,37 @@ class WorkspaceSummaryService:
             return None
         findings = tuple(
             WorkspaceBlocker(
-                str(item.get("code", "PROCESSING_FAILED")),
-                str(item.get("message", "Synopsis processing did not complete.")),
+                code=str(item.get("code", "PROCESSING_FAILED")),
+                message=str(
+                    item.get("message", "Synopsis processing did not complete.")
+                ),
+                affected_area=(
+                    str(item["field"]) if item.get("field") else "synopsis"
+                ),
+                blocking_reason=(
+                    "Synopsis processing cannot succeed until the source content is corrected."
+                    if str(item.get("code", "")).startswith("SYNOPSIS_")
+                    else (
+                        "Synopsis processing did not complete, so downstream review "
+                        "and export remain blocked."
+                    )
+                ),
             )
             for item in attempt.findings_json
         )
         return WorkspaceProcessing(attempt.id, attempt.status, findings)
+
+    @staticmethod
+    def _failed_processing_action(
+        processing: WorkspaceProcessing,
+    ) -> WorkspaceAction:
+        if any(item.code.startswith("SYNOPSIS_") for item in processing.findings):
+            return WorkspaceAction("upload_synopsis", "Upload corrected synopsis")
+        return WorkspaceAction(
+            "retry_processing",
+            "Retry synopsis processing",
+            target_id=processing.attempt_id,
+        )
 
     def _counts(self, tenant_id: str, study_id: str) -> WorkspaceCounts:
         fact_counts: dict[str, int] = {
@@ -371,17 +398,19 @@ class WorkspaceSummaryService:
         if processing.status == "failed":
             blockers = processing.findings or (
                 WorkspaceBlocker(
-                    "PROCESSING_FAILED", "Synopsis processing did not complete."
+                    "PROCESSING_FAILED",
+                    "Synopsis processing did not complete.",
+                    affected_area="synopsis",
+                    blocking_reason=(
+                        "Synopsis processing did not complete, so downstream review "
+                        "and export remain blocked."
+                    ),
                 ),
             )
             return (
                 "processing",
                 blockers,
-                WorkspaceAction(
-                    "retry_processing",
-                    "Retry synopsis processing",
-                    target_id=processing.attempt_id,
-                ),
+                WorkspaceSummaryService._failed_processing_action(processing),
             )
         if processing.status in {"pending", "processing"}:
             return (

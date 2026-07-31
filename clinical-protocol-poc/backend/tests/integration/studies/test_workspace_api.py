@@ -3,6 +3,9 @@ from fastapi.testclient import TestClient
 from protocol_poc.app import create_app
 from protocol_poc.config import get_settings
 from protocol_poc.db import Base
+from protocol_poc.ingest.service import DOCX_CONTENT_TYPE
+from protocol_poc.reliability.fixtures import MISSING_DOSE_INITIAL, SECTIONS, build_synopsis
+from protocol_poc.rendering.template_map import build_template
 from protocol_poc.studies.models import Fact, FactVersion, Study
 
 
@@ -33,6 +36,68 @@ def test_workspace_api_returns_derived_missing_input_summary(tmp_path, monkeypat
     assert payload["next_action"]["kind"] == "upload_synopsis"
     assert payload["inputs"] == {"synopsis": None, "template": None}
     assert payload["blockers"][0]["code"] == "SYNOPSIS_INPUT_MISSING"
+    get_settings.cache_clear()
+
+
+def test_workspace_api_explains_source_correction_without_offering_retry(
+    tmp_path, monkeypatch
+) -> None:
+    client, _app = _client(tmp_path, monkeypatch)
+    headers = {"X-Tenant-ID": "tenant-a", "X-Actor-ID": "writer-a"}
+    created = client.post(
+        "/api/studies",
+        headers=headers,
+        json={"name": "Synthetic missing dose"},
+    )
+    study_id = created.json()["id"]
+    synopsis = client.post(
+        f"/api/studies/{study_id}/inputs",
+        headers=headers,
+        data={"role": "synopsis"},
+        files={
+            "file": (
+                "synopsis.docx",
+                build_synopsis(MISSING_DOSE_INITIAL),
+                DOCX_CONTENT_TYPE,
+            )
+        },
+    )
+    template = client.post(
+        f"/api/studies/{study_id}/inputs",
+        headers=headers,
+        data={"role": "template"},
+        files={"file": ("template.docx", build_template(SECTIONS), DOCX_CONTENT_TYPE)},
+    )
+
+    assert (synopsis.status_code, template.status_code) == (201, 201)
+    processed = client.post(
+        f"/api/studies/{study_id}/inputs/{synopsis.json()['version_id']}/process",
+        headers=headers,
+    )
+    workspace = client.get(f"/api/studies/{study_id}/workspace", headers=headers)
+
+    assert processed.status_code == 200
+    assert processed.json()["status"] == "failed"
+    assert workspace.status_code == 200
+    payload = workspace.json()
+    assert payload["next_action"] == {
+        "kind": "upload_synopsis",
+        "label": "Upload corrected synopsis",
+        "target_id": None,
+        "href": None,
+    }
+    assert payload["blockers"] == [
+        {
+            "code": "SYNOPSIS_DOSE_MISSING",
+            "message": (
+                "Intervention values must include an N mg dose and once daily frequency."
+            ),
+            "affected_area": "arms_interventions",
+            "blocking_reason": (
+                "Synopsis processing cannot succeed until the source content is corrected."
+            ),
+        }
+    ]
     get_settings.cache_clear()
 
 
