@@ -78,8 +78,14 @@ export function WorkspaceGuide({ initialSummary, api = protocolWorkspaceApi }: R
           <h2 id="blockers-heading">What needs attention</h2>
           <ul>
             {summary.blockers.map((blocker) => (
-              <li key={blocker.code}>
-                {blocker.message} <span className="finding-code">({blocker.code})</span>
+              <li key={`${blocker.code}-${blocker.affectedArea ?? "general"}`}>
+                <p>
+                  {blocker.message} <span className="finding-code">({blocker.code})</span>
+                </p>
+                {blocker.affectedArea ? (
+                  <p><strong>Affected area:</strong> {blocker.affectedArea.replaceAll("_", " ")}</p>
+                ) : null}
+                <p><strong>Why progress is blocked:</strong> {blocker.blockingReason}</p>
               </li>
             ))}
           </ul>

@@ -36,7 +36,12 @@ export type WorkspaceInput = {
   conformanceStatus: string;
 };
 
-export type WorkspaceBlocker = { code: string; message: string };
+export type WorkspaceBlocker = {
+  code: string;
+  message: string;
+  affectedArea: string | null;
+  blockingReason: string;
+};
 
 export type ExportCommand = {
   expectedStudyVersion: number;

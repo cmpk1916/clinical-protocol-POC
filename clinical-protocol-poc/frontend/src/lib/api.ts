@@ -4,6 +4,7 @@ import type {
   ExportState,
   QualityScorecard,
   ReviewQueuePayload,
+  WorkspaceBlocker,
   WorkspaceInput,
   WorkspaceSummary,
 } from "./types";
@@ -74,6 +75,13 @@ export type WorkspaceApi = InputApi & {
   retryProcessing(studyId: string, attemptId: string): Promise<WorkspaceSummary>;
 };
 
+type WorkspaceBlockerPayload = {
+  code: string;
+  message: string;
+  affected_area: string | null;
+  blocking_reason: string;
+};
+
 export type WorkspacePayload = {
   study: WorkspaceSummary["study"];
   step: WorkspaceSummary["step"];
@@ -90,7 +98,7 @@ export type WorkspacePayload = {
     rejected_passages: number;
     exports: number;
   };
-  blockers: WorkspaceSummary["blockers"];
+  blockers: WorkspaceBlockerPayload[];
   inputs: Record<"synopsis" | "template", null | {
     role: "synopsis" | "template";
     version_id: string;
@@ -101,7 +109,7 @@ export type WorkspacePayload = {
   processing: null | {
     attempt_id: string;
     status: string;
-    findings: WorkspaceSummary["blockers"];
+    findings: WorkspaceBlockerPayload[];
   };
   next_action: {
     kind: string;
@@ -126,6 +134,15 @@ function mapInput(input: WorkspacePayload["inputs"]["synopsis"]): WorkspaceInput
   } : null;
 }
 
+function mapBlocker(blocker: WorkspaceBlockerPayload): WorkspaceBlocker {
+  return {
+    code: blocker.code,
+    message: blocker.message,
+    affectedArea: blocker.affected_area,
+    blockingReason: blocker.blocking_reason,
+  };
+}
+
 export function toWorkspaceSummary(payload: WorkspacePayload): WorkspaceSummary {
   return {
     study: payload.study,
@@ -143,7 +160,7 @@ export function toWorkspaceSummary(payload: WorkspacePayload): WorkspaceSummary 
       rejectedPassages: payload.counts.rejected_passages,
       exports: payload.counts.exports,
     },
-    blockers: payload.blockers,
+    blockers: payload.blockers.map(mapBlocker),
     inputs: {
       synopsis: mapInput(payload.inputs.synopsis),
       template: mapInput(payload.inputs.template),
@@ -151,7 +168,7 @@ export function toWorkspaceSummary(payload: WorkspacePayload): WorkspaceSummary 
     processing: payload.processing ? {
       attemptId: payload.processing.attempt_id,
       status: payload.processing.status,
-      findings: payload.processing.findings,
+      findings: payload.processing.findings.map(mapBlocker),
     } : null,
     nextAction: {
       kind: payload.next_action.kind,

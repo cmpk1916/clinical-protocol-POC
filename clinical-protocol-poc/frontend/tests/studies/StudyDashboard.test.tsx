@@ -58,6 +58,8 @@ const active: StudySummary = {
       {
         code: "SYNOPSIS_INPUT_MISSING",
         message: "Upload a supported synopsis DOCX to continue.",
+        affectedArea: "synopsis",
+        blockingReason: "Synopsis processing cannot begin until a source document is uploaded.",
       },
     ],
     inputs: { synopsis: null, template: null },
