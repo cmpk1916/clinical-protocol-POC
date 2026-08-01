@@ -33,8 +33,10 @@ Both workflows test a synthetic proof of concept. They are not system validation
 
 Development also requires `uv`, Node.js 22, and pnpm 11.7.0. Run `make bootstrap` to install the locked dependencies, then run `make lint`, `make typecheck`, `make test`, `make evaluation`, and `make e2e`.
 
+Run `make reliability-pilot` for the isolated six-study synthetic reliability evaluation. It creates two disposable clean stacks, runs three direct-success and three mistake-and-recovery studies through the real self-service interfaces, compares stable results, writes ignored local reports under `work/reliability-pilot/`, and removes both stacks and their volumes. A passing result requires 6 of 6 studies in both runs, all expected correction-path export denials, deterministic agreement, and `unsupported clinical facts exported: 0`.
+
 ## Demo entrypoint
 
 `make demo` prints the direct review URL after the stack becomes healthy. The API health endpoint is `http://localhost:8000/health`.
 
-See `docs/demo-script.md` for the successful and blocked demo paths, `docs/release-checklist.md` for retained release evidence, `docs/architecture.md` for system boundaries, and `docs/safety-case.md` for the invariant-to-control map.
+See `docs/demo-script.md` for the successful and blocked demo paths, `docs/reliability-pilot.md` for the retained six-study reliability summary, `docs/release-checklist.md` for retained release evidence, `docs/architecture.md` for system boundaries, and `docs/safety-case.md` for the invariant-to-control map.

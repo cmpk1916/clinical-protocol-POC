@@ -44,10 +44,21 @@ def test_every_safety_invariant_has_control_test_and_owner() -> None:
         "fact_change_invalidation",
         "validator_failure_closed",
         "tenant_isolation",
+        "six_study_reliability",
     }
 
     assert required <= {control.control_id for control in controls}
     assert all(control.test_ids and control.module_owner for control in controls)
+    reliability = next(
+        control for control in controls
+        if control.control_id == "six_study_reliability"
+    )
+    assert reliability.module_owner == "protocol_poc.reliability"
+    assert {
+        "tests/integration/reliability/test_six_study_pilot.py",
+        "tests/unit/reliability/test_report.py",
+        "tests/unit/reliability/test_cli.py",
+    } <= set(reliability.test_ids)
 
 
 def test_release_checklist_records_artifact_and_visual_evidence() -> None:
@@ -63,3 +74,44 @@ def test_release_checklist_records_artifact_and_visual_evidence() -> None:
     assert "DOCX visual inspection: PASS" in checklist
     assert "synthetic data only" in checklist.lower()
     assert "not a validated system" in checklist.lower()
+
+
+def test_reliability_pilot_documents_stable_controls_and_non_claims() -> None:
+    document_path = Path(__file__).parents[3] / "docs" / "reliability-pilot.md"
+    document = document_path.read_text()
+    required = {
+        "six synthetic self-service studies",
+        "three direct-success studies",
+        "three mistake-and-recovery studies",
+        "SYNOPSIS_DOSE_MISSING",
+        "TEMPLATE_TOKEN_MISSING",
+        "UNSUPPORTED_DOSE",
+        "two clean-stack runs",
+        "unsupported clinical facts exported: 0",
+        "passed both clean stacks at 6 of 6 studies",
+        "all three pre-correction denials",
+        "deterministic repeatability comparison with no mismatches",
+        "synthetic POC reliability evidence only",
+        "not system validation",
+        (
+            "does not establish a clinical, regulatory, submission, operational, "
+            "production, or readiness claim"
+        ),
+    }
+    forbidden_claims = {
+        "clinically ready",
+        "clinical readiness",
+        "regulatorily ready",
+        "regulatory readiness",
+        "submission ready",
+        "submission readiness",
+        "operationally ready",
+        "operational readiness",
+        "production ready",
+        "production readiness",
+        "validated system",
+    }
+
+    assert all(item in document for item in required)
+    assert "readiness percentage" not in document.casefold()
+    assert all(claim not in document.casefold() for claim in forbidden_claims)

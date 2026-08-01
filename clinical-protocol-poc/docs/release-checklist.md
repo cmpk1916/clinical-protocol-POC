@@ -24,11 +24,26 @@ The hashes downloaded from the API matched fresh local SHA-256 calculations for 
 
 ## Automated evidence
 
-- Backend: 145 passed, including the release-checklist control.
-- Frontend unit/component: 7 passed.
-- Browser: 3 passed, covering happy-path downloads, unsupported eligibility blocking, and changed-fact invalidation.
-- Static analysis: backend lint and typing passed across 72 source files; frontend lint and type checks passed.
+- Backend: 357 passed and 4 concurrency tests skipped on SQLite, including the release-checklist and reliability-pilot controls.
+- Frontend unit/component: 42 passed.
+- Browser: 10 passed, covering full self-service export, blocked-content recovery, fact invalidation, input replacement, archive/restore, and saved-progress resumption.
+- Static analysis: backend lint passed and strict typing passed across 89 source files; frontend lint and type checks passed.
+- Evaluation: 18 passed, including all 13 adversarial export-denial scenarios.
 - Evaluation invariant: `unsupported clinical facts exported: 0`.
+
+## Six-study reliability evidence
+
+The final synthetic reliability pilot completed three direct-success studies and three mistake-and-recovery studies through the real self-service HTTP workflow in each of two isolated clean stacks.
+
+- Run A: 6 of 6 studies passed.
+- Run B: 6 of 6 studies passed.
+- Pre-correction export denials: 3 of 3 observed.
+- Corrected synopsis, corrected template, and blocked-passage regeneration: PASS.
+- Artifact integrity, traceability validation, scorecard limitations, and unresolved-template checks: PASS.
+- Deterministic comparison after excluding run-specific IDs, timestamps, and hashes: PASS with no mismatches.
+- `unsupported clinical facts exported: 0`.
+
+The generated run reports remain ignored under `work/reliability-pilot/`. The reviewed stable summary is retained in `docs/reliability-pilot.md`; it contains no run-specific study, snapshot, artifact, or file-version IDs.
 
 ## Reproduction
 
@@ -36,6 +51,7 @@ The hashes downloaded from the API matched fresh local SHA-256 calculations for 
 2. Run `make demo` and open the printed review URL.
 3. Approve the synthetic critical fact, accept the valid passage, create an export, and download all three artifacts.
 4. Run `make evaluation` and `make e2e` for the safety and browser evidence.
-5. Run `make down` when finished.
+5. Run `make reliability-pilot` for the two clean-stack six-study evaluation and deterministic comparison.
+6. Run `make down` when finished.
 
 Known limitations include synthetic fixtures, local header-based identity, a bounded four-section protocol, no live research, no production authorization model, and no regulated-system validation.
