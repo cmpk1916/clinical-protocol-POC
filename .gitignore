@@ -13,6 +13,7 @@ node_modules/
 work/uv-venv/
 clinical-protocol-poc/work/pnpm-store/
 clinical-protocol-poc/work/reliability-pilot/
+clinical-protocol-poc/work/guided-review/
 .next/
 .env
 dist/

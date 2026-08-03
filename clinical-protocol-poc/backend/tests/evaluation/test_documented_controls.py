@@ -115,3 +115,24 @@ def test_reliability_pilot_documents_stable_controls_and_non_claims() -> None:
     assert all(item in document for item in required)
     assert "readiness percentage" not in document.casefold()
     assert all(claim not in document.casefold() for claim in forbidden_claims)
+
+
+def test_guided_review_workspace_is_documented_and_local_only() -> None:
+    app_root = Path(__file__).parents[3]
+    repository_root = app_root.parent
+    review_readme = (app_root / "docs" / "guided-review" / "README.md").read_text()
+    gitignore = (repository_root / ".gitignore").read_text()
+
+    required = {
+        "presenter-controlled virtual review",
+        "synthetic proof of concept",
+        "fixtures/reliability-pilot/standard/",
+        "fixtures/reliability-pilot/missing-dose/",
+        "work/guided-review/",
+        "completed reviewer records remain local",
+        "no public link",
+        "no remote control",
+    }
+
+    assert all(item in review_readme for item in required)
+    assert "clinical-protocol-poc/work/guided-review/" in gitignore
