@@ -2,7 +2,7 @@
 
 This kit supports a presenter-controlled virtual review of the Clinical Protocol POC. The presenter runs and controls the local application while each reviewer watches through screen sharing, asks questions, and requests that screens or artifacts be revisited.
 
-The application is a synthetic proof of concept. It is not validated and does not establish clinical, regulatory, submission, operational, or production readiness.
+The application is a synthetic proof of concept. It is not validated and does not establish clinical, regulatory, submission, operational, production, or system-validation readiness.
 
 ## Demonstration studies
 
@@ -25,4 +25,4 @@ Reviewers receive no public link, no remote control, no credentials, no reposito
 
 ## Record boundary
 
-Duplicate `feedback-template.md` into `work/guided-review/` for each session. For each session, completed reviewer records remain local in that ignored directory. Do not place names, employers, contact details, confidential information, or attributable quotations in checked-in documentation.
+Duplicate `feedback-template.md` into `work/guided-review/` for each session. A review may be recorded only with explicit reviewer permission. For each session, completed reviewer records remain local in that ignored directory and must separate direct observations from interpretation and feature requests. Do not place names, employers, contact details, confidential information, or attributable quotations in checked-in documentation.

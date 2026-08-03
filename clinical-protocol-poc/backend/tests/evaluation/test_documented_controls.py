@@ -126,10 +126,13 @@ def test_guided_review_workspace_is_documented_and_local_only() -> None:
     required = {
         "presenter-controlled virtual review",
         "synthetic proof of concept",
+        "system-validation readiness",
         "fixtures/reliability-pilot/standard/",
         "fixtures/reliability-pilot/missing-dose/",
         "work/guided-review/",
         "completed reviewer records remain local",
+        "may be recorded only with explicit reviewer permission",
+        "separate direct observations from interpretation and feature requests",
         "no public link",
         "no remote control",
     }
