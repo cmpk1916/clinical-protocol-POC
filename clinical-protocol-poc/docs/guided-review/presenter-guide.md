@@ -37,7 +37,7 @@ Use `fixtures/reliability-pilot/missing-dose/`.
 
 ## Role-specific discussion: 10 to 15 minutes
 
-Use `questions.md`. Ask the shared questions first, followed by the questions for the reviewer’s role. Record confusion before explaining it.
+Use `questions.md`. Ask the shared questions first, followed by the questions for the reviewer’s role. Record confusion before explaining it. Keep direct observations separate from interpretation and feature requests. Checked-in synthesis excludes reviewer identities, confidential information, and attributable quotations.
 
 ## Unexpected behavior
 

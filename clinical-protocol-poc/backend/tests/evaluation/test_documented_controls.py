@@ -160,6 +160,12 @@ def test_guided_review_presenter_materials_cover_both_workflows() -> None:
         "Do not upload any document supplied by a reviewer",
         "Do not conceal unexpected behavior",
         "Do not record the call without explicit permission",
+        "work/guided-review/",
+        "Keep direct observations separate from interpretation and feature requests",
+        (
+            "Checked-in synthesis excludes reviewer identities, confidential "
+            "information, and attributable quotations"
+        ),
     }
 
     assert all(item in combined for item in required)

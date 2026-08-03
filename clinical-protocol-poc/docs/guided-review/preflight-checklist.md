@@ -11,7 +11,7 @@ Complete every item before each call.
 - [ ] Download and open `protocol.docx`, `traceability.csv`, and `scorecard.html`.
 - [ ] Confirm screen sharing exposes only the application window.
 - [ ] Close unrelated windows and disable distracting notifications.
-- [ ] Prepare `questions.md` and a fresh local feedback record.
+- [ ] Prepare `questions.md` and a fresh local feedback record under `work/guided-review/`.
 - [ ] Do not upload any document supplied by a reviewer.
 - [ ] Do not conceal unexpected behavior.
 - [ ] Do not record the call without explicit permission.
