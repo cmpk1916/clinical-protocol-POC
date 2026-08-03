@@ -200,3 +200,29 @@ def test_guided_review_questions_and_feedback_schema_are_complete() -> None:
         )
     )
     assert "Do not record names, employers, or contact details" in feedback
+
+
+def test_guided_review_synthesis_preserves_evidence_and_roadmap_boundaries() -> None:
+    path = (
+        Path(__file__).parents[3]
+        / "docs"
+        / "guided-review"
+        / "synthesis-template.md"
+    )
+    synthesis = path.read_text()
+    required = {
+        "R&D reviewer",
+        "CRO reviewer",
+        "Medical writer",
+        "Repeated findings",
+        "Role-specific differences",
+        "Serious safety or content-integrity concerns",
+        "Generalization and Evaluation",
+        "M11 and protocol expansion",
+        "Security and deployment",
+        "No action until additional evidence exists",
+        "Do not include reviewer names, employers, contact details",
+    }
+
+    assert all(item in synthesis for item in required)
+    assert "Every actionable finding receives one primary destination" in synthesis
