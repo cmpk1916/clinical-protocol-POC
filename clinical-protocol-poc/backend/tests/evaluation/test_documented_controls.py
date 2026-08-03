@@ -139,3 +139,27 @@ def test_guided_review_workspace_is_documented_and_local_only() -> None:
 
     assert all(item in review_readme for item in required)
     assert "clinical-protocol-poc/work/guided-review/" in gitignore
+
+
+def test_guided_review_presenter_materials_cover_both_workflows() -> None:
+    review_root = Path(__file__).parents[3] / "docs" / "guided-review"
+    guide = (review_root / "presenter-guide.md").read_text()
+    preflight = (review_root / "preflight-checklist.md").read_text()
+    combined = f"{guide}\n{preflight}"
+
+    required = {
+        "35 to 45 minutes",
+        "Opening: 5 minutes",
+        "Successful workflow: 10 to 15 minutes",
+        "Mistake and recovery: 10 minutes",
+        "Role-specific discussion: 10 to 15 minutes",
+        "protocol.docx",
+        "traceability.csv",
+        "scorecard.html",
+        "corrected-synopsis.docx",
+        "Do not upload any document supplied by a reviewer",
+        "Do not conceal unexpected behavior",
+        "Do not record the call without explicit permission",
+    }
+
+    assert all(item in combined for item in required)
