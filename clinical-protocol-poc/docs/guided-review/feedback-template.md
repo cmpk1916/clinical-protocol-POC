@@ -17,6 +17,10 @@ Do not record names, employers, or contact details. Do not include confidential 
 
 Record visible behavior and reviewer statements without interpretation.
 
+### Exact reviewer statements (non-attributable)
+
+Record exact wording only when it matters, without names, employers, contact details, or other identifying context.
+
 ### Points of confusion
 
 Record what was unclear before providing additional explanation.

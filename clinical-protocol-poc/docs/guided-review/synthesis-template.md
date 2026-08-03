@@ -6,7 +6,7 @@ Do not include reviewer names, employers, contact details, confidential informat
 
 ## Review scope and safeguards
 
-Source reviews are a presenter-controlled virtual review of the synthetic proof of concept. No reviewer access is provided to the application, source materials, or private feedback records. Do not use real or confidential documents.
+Source reviews are a presenter-controlled virtual review of the synthetic proof of concept. Reviewers receive no application credentials, no interactive or remote-control access, no source files, no repository access, and no private feedback records. They may visually inspect the presenter-controlled synthetic workflow and evidence through screen sharing. Do not use real or confidential documents.
 
 ## Reviews completed
 
@@ -31,6 +31,8 @@ Preserve conflicting or specialized feedback by reviewer role. Do not average di
 List every serious concern even if only one reviewer identified it.
 
 A single serious safety, content-integrity, or confidentiality concern receives immediate attention and escalation.
+
+No single reviewer determines the roadmap. The immediate-attention exception above still applies to any single serious safety, content-integrity, or confidentiality concern.
 
 ## Demonstration failures
 

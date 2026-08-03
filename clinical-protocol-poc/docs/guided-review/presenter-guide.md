@@ -4,6 +4,8 @@
 
 Allow 35 to 45 minutes. Share only the application window and retain control of every action. The reviewer may ask questions and request that any screen or artifact be revisited.
 
+Conduct the reviews in this order: R&D reviewer with limited protocol experience, then the CRO reviewer, then the medical writer.
+
 ## Opening: 5 minutes
 
 State: “This is a local synthetic proof of concept. It demonstrates evidence-controlled protocol drafting and mistake recovery. It is not validated and is not ready for clinical, regulatory, submission, operational, or production use.”
@@ -46,3 +48,5 @@ Do not conceal unexpected behavior. State what happened, record the action and v
 ## Closing
 
 Thank the reviewer, explain that feedback will shape a broader synthetic Generalization and Evaluation milestone, and make no promise that a requested feature will be implemented.
+
+Immediately after the call, complete the private local feedback record under `work/guided-review/` while separating direct observations and exact non-attributable statements from interpretation and feature requests.

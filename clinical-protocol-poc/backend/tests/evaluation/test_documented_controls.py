@@ -166,6 +166,10 @@ def test_guided_review_presenter_materials_cover_both_workflows() -> None:
             "Checked-in synthesis excludes reviewer identities, confidential "
             "information, and attributable quotations"
         ),
+        (
+            "R&D reviewer with limited protocol experience, then the CRO "
+            "reviewer, then the medical writer"
+        ),
     }
 
     assert all(item in combined for item in required)
@@ -175,6 +179,7 @@ def test_guided_review_questions_and_feedback_schema_are_complete() -> None:
     review_root = Path(__file__).parents[3] / "docs" / "guided-review"
     questions = (review_root / "questions.md").read_text()
     feedback = (review_root / "feedback-template.md").read_text()
+    presenter_guide = (review_root / "presenter-guide.md").read_text()
 
     assert all(
         heading in questions
@@ -200,6 +205,16 @@ def test_guided_review_questions_and_feedback_schema_are_complete() -> None:
         )
     )
     assert "Do not record names, employers, or contact details" in feedback
+    assert "### Exact reviewer statements (non-attributable)" in feedback
+    assert (
+        "Record exact wording only when it matters, without names, employers, "
+        "contact details, or other identifying context."
+        in feedback
+    )
+    assert (
+        "Immediately after the call, complete the private local feedback record"
+        in presenter_guide
+    )
 
 
 def test_guided_review_synthesis_preserves_evidence_and_roadmap_boundaries() -> None:
@@ -229,8 +244,17 @@ def test_guided_review_synthesis_preserves_evidence_and_roadmap_boundaries() -> 
         "immediate attention and escalation",
         "presenter-controlled virtual review",
         "synthetic proof of concept",
-        "No reviewer access",
+        "no application credentials",
+        "no interactive or remote-control access",
+        "no source files",
+        "no repository access",
+        "no private feedback records",
+        (
+            "visually inspect the presenter-controlled synthetic workflow and "
+            "evidence through screen sharing"
+        ),
         "Do not use real or confidential documents",
+        "No single reviewer determines the roadmap",
     }
 
     assert all(item in synthesis for item in required)
