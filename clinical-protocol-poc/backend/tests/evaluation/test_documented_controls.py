@@ -222,6 +222,15 @@ def test_guided_review_synthesis_preserves_evidence_and_roadmap_boundaries() -> 
         "Security and deployment",
         "No action until additional evidence exists",
         "Do not include reviewer names, employers, contact details",
+        "Direct observations",
+        "Presenter interpretation",
+        "Reviewer requests",
+        "Repeated findings receive higher priority",
+        "immediate attention and escalation",
+        "presenter-controlled virtual review",
+        "synthetic proof of concept",
+        "No reviewer access",
+        "Do not use real or confidential documents",
     }
 
     assert all(item in synthesis for item in required)
