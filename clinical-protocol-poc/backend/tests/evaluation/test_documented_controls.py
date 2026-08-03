@@ -169,3 +169,34 @@ def test_guided_review_presenter_materials_cover_both_workflows() -> None:
     }
 
     assert all(item in combined for item in required)
+
+
+def test_guided_review_questions_and_feedback_schema_are_complete() -> None:
+    review_root = Path(__file__).parents[3] / "docs" / "guided-review"
+    questions = (review_root / "questions.md").read_text()
+    feedback = (review_root / "feedback-template.md").read_text()
+
+    assert all(
+        heading in questions
+        for heading in (
+            "## Shared questions",
+            "## R&D reviewer with limited protocol experience",
+            "## CRO reviewer",
+            "## Medical writer",
+        )
+    )
+    assert all(
+        field in feedback
+        for field in (
+            "Reviewer role and relevant experience",
+            "Direct observations",
+            "Points of confusion",
+            "Trust or safety concerns",
+            "Workflow mismatches",
+            "Document or vocabulary variations described",
+            "Commercial or pilot interest",
+            "Presenter interpretation",
+            "Items requiring confirmation",
+        )
+    )
+    assert "Do not record names, employers, or contact details" in feedback
