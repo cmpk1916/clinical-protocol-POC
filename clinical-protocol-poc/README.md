@@ -37,6 +37,8 @@ Run `make reliability-pilot` for the isolated six-study synthetic reliability ev
 
 ## Demo entrypoint
 
+For a presenter-controlled synthetic external review, use `docs/guided-review/README.md`. It contains the approved walkthrough, preflight checks, role-specific questions, private feedback template, and synthesis method. Reviewers watch through screen sharing while the presenter retains control of the local application.
+
 `make demo` prints the direct review URL after the stack becomes healthy. The API health endpoint is `http://localhost:8000/health`.
 
 See `docs/demo-script.md` for the successful and blocked demo paths, `docs/reliability-pilot.md` for the retained six-study reliability summary, `docs/release-checklist.md` for retained release evidence, `docs/architecture.md` for system boundaries, and `docs/safety-case.md` for the invariant-to-control map.

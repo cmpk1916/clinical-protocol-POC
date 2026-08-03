@@ -235,3 +235,10 @@ def test_guided_review_synthesis_preserves_evidence_and_roadmap_boundaries() -> 
 
     assert all(item in synthesis for item in required)
     assert "Every actionable finding receives one primary destination" in synthesis
+
+
+def test_project_readme_links_the_guided_review_kit() -> None:
+    readme = (Path(__file__).parents[3] / "README.md").read_text()
+
+    assert "docs/guided-review/README.md" in readme
+    assert "presenter-controlled synthetic external review" in readme
